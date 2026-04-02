@@ -7,6 +7,8 @@ from fetcher import fetch_page
 from parser import parse_schedule_html, search_teachers
 from utils import send_long
 
+DIVIDER = "─" * 28
+
 
 def _after_teacher_keyboard(teacher_name: str, teacher_url: str) -> InlineKeyboardMarkup:
     fav_data = f"fav_add_teacher|fav|add|{teacher_name}|{teacher_url}"
@@ -102,7 +104,8 @@ async def _load_teacher_schedule(update: Update, teacher: dict) -> int:
     full_text = (
         f"👨‍🏫 *{teacher['name']}*\n"
         f"🔗 [На сайте]({teacher['url']})\n"
-        f"{─*28}\n" + schedule_text
+        f"{DIVIDER}\n"
+        + schedule_text
     )
     await msg.delete()
     await send_long(update.message, full_text)

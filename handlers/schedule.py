@@ -12,6 +12,8 @@ from parser import parse_schedule_html
 from keyboards import faculty_keyboard, form_keyboard, my_schedule_keyboard
 from utils import send_long
 
+DIVIDER = "─" * 28
+
 
 async def show_faculties(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     query = update.callback_query
@@ -86,11 +88,10 @@ async def _fetch_and_send(
         f"🏛️ {faculty_name}\n"
         f"📋 {form_name}\n"
         f"🔗 [Открыть на сайте]({url})\n"
-        f"{─*28}\n"
+        f"{DIVIDER}\n"
     )
     await msg.delete()
     await send_long(message_obj, header + schedule_text)
-
     if user_id:
         add_history(user_id, "group", f"{faculty}/{form}/{group}")
     return True
