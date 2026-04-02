@@ -1,4 +1,4 @@
-BOT_TOKEN = "YOUR_BOT_TOKEN_HERE"
+BOT_TOKEN = "8764207637:AAFERtwA5g7LPyo3hfL4h__5eUu7NimTA0M"
 BASE_URL = "https://www.sgu.ru"
 
 # --- Прокси для доступа к Telegram (нужен если Telegram заблокирован) ---
