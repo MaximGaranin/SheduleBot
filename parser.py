@@ -29,7 +29,6 @@ def parse_schedule_html(html: str, only_day: str = None) -> str:
     if len(rows) < 2:
         return "⚠️ Таблица пустая."
 
-    # Find header row with day names
     day_col = {}
     header_row_idx = None
     for r_idx, row in enumerate(rows[:3]):
@@ -46,7 +45,6 @@ def parse_schedule_html(html: str, only_day: str = None) -> str:
     if not day_col:
         return "⚠️ Не удалось определить структуру таблицы."
 
-    # Skip possible second header row (Пн/Вт/Ср abbreviations)
     data_start = header_row_idx + 1
     if data_start < len(rows):
         next_cells = rows[data_start].find_all(["td", "th"])
@@ -89,20 +87,73 @@ def parse_schedule_html(html: str, only_day: str = None) -> str:
     return "\n".join(lines) if lines else "⚠️ Занятий не найдено."
 
 
+# ─── Поиск преподавателей ──────────────────────────────────────────────────────
+
+def _score_teacher(name_lower: str, words: list[str]) -> int:
+    """
+    Счёт релевантности:
+      +3 — слово найдено в начале токена (полное совпадение)
+      +2 — слово является началом токена (фамилия)
+      +1 — слово встречается в любом месте
+       0 — слово не найдено (результат не включается)
+    """
+    tokens = name_lower.split()
+    total = 0
+    for word in words:
+        if word in tokens:          # точное совпадение токена
+            total += 3
+        elif any(t.startswith(word) for t in tokens):  # начало токена
+            total += 2
+        elif word in name_lower:    # подстрока
+            total += 1
+        else:
+            return 0                # хоть одно слово не найдено — исключаем
+    return total
+
+
 def search_teachers(html: str, query: str) -> list[dict]:
-    """Search teacher links on the main schedule page."""
+    """
+    Умный поиск преподавателей по ФИО / отдельным словам.
+
+    Примеры запросов:
+      "Иванов"
+      "Иванов Иван"
+      "Иванов Иван Иванович"
+      "Иванов И.И."
+    """
     soup = BeautifulSoup(html, "html.parser")
-    query_lower = query.lower()
+
+    # Разбиваем запрос на слова, убираем пустые
+    raw_words = re.split(r'[\s,.]+', query.strip().lower())
+    words = [w for w in raw_words if len(w) >= 2]
+
+    if not words:
+        return []
+
     results = []
     seen_urls = set()
+
     for a in soup.find_all("a"):
         link_text = clean(a.get_text())
-        href = a.get("href", "")
-        if (query_lower in link_text.lower()
-                and len(link_text) > 3
-                and "/schedule/" in href):
-            full_url = BASE_URL + href if href.startswith("/") else href
-            if full_url not in seen_urls:
-                seen_urls.add(full_url)
-                results.append({"name": link_text, "url": full_url})
-    return results
+        href      = a.get("href", "")
+
+        # Оставляем только ссылки на расписание преподавателей
+        if not ("/schedule/" in href and len(link_text) > 3):
+            continue
+
+        score = _score_teacher(link_text.lower(), words)
+        if score == 0:
+            continue
+
+        full_url = BASE_URL + href if href.startswith("/") else href
+        if full_url in seen_urls:
+            continue
+
+        seen_urls.add(full_url)
+        results.append({"name": link_text, "url": full_url, "score": score})
+
+    # Сортируем по релевантности (больше — лучше), затем по имени
+    results.sort(key=lambda x: (-x["score"], x["name"]))
+
+    # Убираем вспомогательное поле score из результата
+    return [{"name": r["name"], "url": r["url"]} for r in results]
