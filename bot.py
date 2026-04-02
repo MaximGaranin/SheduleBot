@@ -1,8 +1,10 @@
 import logging
+from telegram import Update
 from telegram.ext import (
     Application, CommandHandler, CallbackQueryHandler,
     MessageHandler, filters, ConversationHandler,
 )
+from telegram.request import HTTPXRequest
 from config import (
     BOT_TOKEN,
     MAIN_MENU, CHOOSE_FACULTY, CHOOSE_FORM, ENTER_GROUP,
@@ -30,7 +32,7 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 
-async def main_menu_router(update, context):
+async def main_menu_router(update: Update, context):
     query = update.callback_query
     await query.answer()
     d = query.data
@@ -100,10 +102,33 @@ def build_conv() -> ConversationHandler:
 
 def main():
     init_db()
-    app = Application.builder().token(BOT_TOKEN).build()
+
+    # Увеличенные таймауты для нестабильных соединений
+    request = HTTPXRequest(
+        connect_timeout=20.0,
+        read_timeout=30.0,
+        write_timeout=30.0,
+        pool_timeout=10.0,
+    )
+
+    app = (
+        Application.builder()
+        .token(BOT_TOKEN)
+        .request(request)
+        .get_updates_request(
+            HTTPXRequest(
+                connect_timeout=20.0,
+                read_timeout=40.0,  # долгий polling
+                write_timeout=30.0,
+                pool_timeout=10.0,
+            )
+        )
+        .build()
+    )
+
     app.add_handler(build_conv())
     logger.info("SGU Bot started.")
-    app.run_polling()
+    app.run_polling(drop_pending_updates=True)
 
 
 if __name__ == "__main__":
