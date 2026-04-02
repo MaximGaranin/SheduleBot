@@ -47,9 +47,7 @@ async def teacher_query_entered(update: Update, context: ContextTypes.DEFAULT_TY
         return await teacher_number_entered(update, context)
 
     if len(text) < 2:
-        await update.message.reply_text(
-            "❌ Слишком коротко. Введите фамилию."
-        )
+        await update.message.reply_text("❌ Слишком коротко. Введите фамилию.")
         return ENTER_TEACHER
 
     # Валидация: есть ли русские буквы
@@ -102,12 +100,11 @@ async def teacher_query_entered(update: Update, context: ContextTypes.DEFAULT_TY
         )
         return await _load_teacher_schedule(update, results[0])
 
+    # Показываем ВСЕХ найденных без ограничений
     context.user_data["teacher_results"] = results
     lines = [f"🔍 *Найдено {len(results)} преподавателя* ({source}):\n"]
-    for i, t in enumerate(results[:20], 1):
+    for i, t in enumerate(results, 1):
         lines.append(f"*{i}.* {t['name']}")
-    if len(results) > 20:
-        lines.append(f"\n_…и ещё {len(results) - 20}. Уточните запрос._")
     lines.append("\n✏️ Введите *номер* преподавателя:")
     await msg.edit_text("\n".join(lines), parse_mode="Markdown")
     return TEACHER_SELECT_NUMBER
@@ -123,8 +120,8 @@ async def teacher_number_entered(update: Update, context: ContextTypes.DEFAULT_T
         await update.message.reply_text("❓ Список устарел. Введите ФИО заново.")
         return ENTER_TEACHER
     num = int(text)
-    if num < 1 or num > min(len(results), 20):
-        await update.message.reply_text(f"❌ Введите число от 1 до {min(len(results), 20)}.")
+    if num < 1 or num > len(results):
+        await update.message.reply_text(f"❌ Введите число от 1 до {len(results)}.")
         return TEACHER_SELECT_NUMBER
     return await _load_teacher_schedule(update, results[num - 1])
 
