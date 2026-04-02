@@ -7,11 +7,112 @@ def clean(text: str) -> str:
     return re.sub(r'\s+', ' ', text).strip()
 
 
+def _parse_horizontal(rows, header_row_idx) -> dict:
+    """Горизонтальная таблица: дни = столбцы (расписание группы)."""
+    day_col = {}
+    for row in rows[:header_row_idx + 1]:
+        cells = row.find_all(["td", "th"])
+        for c_idx, cell in enumerate(cells):
+            txt = clean(cell.get_text())
+            short = DAY_NAMES.get(txt)
+            if short:
+                day_col[c_idx] = short
+
+    schedule = {day: [] for day in DAYS_ORDER}
+    data_start = header_row_idx + 1
+    # Пропустить возможную вторую строку заголовка
+    if data_start < len(rows):
+        next_cells = rows[data_start].find_all(["td", "th"])
+        next_texts = [clean(c.get_text()) for c in next_cells]
+        if any(t in DAY_NAMES for t in next_texts):
+            data_start += 1
+
+    for row in rows[data_start:]:
+        cells = row.find_all(["td", "th"])
+        if not cells:
+            continue
+        time_val = clean(cells[0].get_text())
+        if not re.search(r'\d{1,2}:\d{2}', time_val):
+            continue
+        for c_idx, day in day_col.items():
+            if c_idx < len(cells):
+                lesson = clean(cells[c_idx].get_text(" "))
+                if lesson and lesson not in ["-", "–", "—", ""]:
+                    schedule[day].append((time_val, lesson))
+    return schedule
+
+
+def _parse_vertical(rows) -> dict:
+    """Вертикальная таблица: дни = строки (расписание преподавателя).
+
+    Структура каждой строки-блока:
+      [0] номер дня / название дня
+      [1] время
+      [2] содержимое занятия
+    Или строка-заголовок дня, за которой идут строки времён.
+    """
+    schedule = {day: [] for day in DAYS_ORDER}
+    current_day = None
+
+    for row in rows:
+        cells = row.find_all(["td", "th"])
+        if not cells:
+            continue
+        texts = [clean(c.get_text(" ")) for c in cells]
+
+        # Строка-заголовок дня: одна ячейка = название дня
+        if len(texts) == 1:
+            short = DAY_NAMES.get(texts[0])
+            if short:
+                current_day = short
+            continue
+
+        # Проверяем, не начинается ли первая ячейка с названия дня
+        first_short = DAY_NAMES.get(texts[0])
+        if first_short:
+            current_day = first_short
+            texts = texts[1:]  # остаток строки — время и занятие
+
+        if current_day is None:
+            continue
+
+        # Ищем время в любой из ячеек
+        time_val = None
+        lesson_parts = []
+        for t in texts:
+            if re.search(r'\d{1,2}:\d{2}', t) and time_val is None:
+                time_val = t
+            elif t and t not in ["-", "–", "—"]:
+                lesson_parts.append(t)
+
+        if time_val and lesson_parts:
+            schedule[current_day].append((time_val, " ".join(lesson_parts)))
+
+    return schedule
+
+
+def _format_schedule(schedule: dict, only_day: str = None) -> str:
+    days_to_show = [only_day] if only_day else DAYS_ORDER
+    lines = []
+    for day in days_to_show:
+        entries = schedule.get(day, [])
+        if not entries:
+            if only_day:
+                return f"📭 В *{day}* занятий нет."
+            continue
+        lines.append(f"\n{DAY_EMOJI.get(day, '📅')} *{day}*")
+        for time_val, lesson in entries:
+            time_fmt = re.sub(r'(\d{2}:\d{2})\s+(\d{2}:\d{2})', r'\1–\2', time_val)
+            lines.append(f"  ⏰ `{time_fmt}`")
+            parts = re.split(r'(?=ЛЕКЦИЯ|ПРАКТИКА|СЕМИНАР|ЛАБОРАТОРНАЯ)', lesson)
+            for part in parts:
+                part = part.strip()
+                if part:
+                    lines.append(f"     {part}")
+    return "\n".join(lines) if lines else "⚠️ Занятий не найдено."
+
+
 def parse_schedule_html(html: str, only_day: str = None) -> str:
-    """
-    Parse SGU timetable HTML table.
-    only_day: short day name e.g. "Пн" — returns only that day.
-    """
     soup = BeautifulSoup(html, "html.parser")
 
     target_table = None
@@ -29,8 +130,9 @@ def parse_schedule_html(html: str, only_day: str = None) -> str:
     if len(rows) < 2:
         return "⚠️ Таблица пустая."
 
-    day_col = {}
+    # Определяем тип таблицы: горизонтальная или вертикальная
     header_row_idx = None
+    day_col = {}
     for r_idx, row in enumerate(rows[:3]):
         cells = row.find_all(["td", "th"])
         for c_idx, cell in enumerate(cells):
@@ -42,91 +144,37 @@ def parse_schedule_html(html: str, only_day: str = None) -> str:
             header_row_idx = r_idx
             break
 
-    if not day_col:
-        return "⚠️ Не удалось определить структуру таблицы."
+    if day_col:
+        # Горизонтальная: дни в первых строках как столбцы
+        schedule = _parse_horizontal(rows, header_row_idx)
+    else:
+        # Вертикальная: дни как строки (преподаватели)
+        schedule = _parse_vertical(rows)
 
-    data_start = header_row_idx + 1
-    if data_start < len(rows):
-        next_cells = rows[data_start].find_all(["td", "th"])
-        next_texts = [clean(c.get_text()) for c in next_cells]
-        if any(t in DAY_NAMES for t in next_texts):
-            data_start += 1
-
-    schedule = {day: [] for day in DAYS_ORDER}
-    for row in rows[data_start:]:
-        cells = row.find_all(["td", "th"])
-        if not cells:
-            continue
-        time_val = clean(cells[0].get_text())
-        if not re.search(r'\d{1,2}:\d{2}', time_val):
-            continue
-        for c_idx, day in day_col.items():
-            if c_idx < len(cells):
-                lesson = clean(cells[c_idx].get_text(" "))
-                if lesson and lesson not in ["-", "–", "—", ""]:
-                    schedule[day].append((time_val, lesson))
-
-    days_to_show = [only_day] if only_day else DAYS_ORDER
-    lines = []
-    for day in days_to_show:
-        entries = schedule.get(day, [])
-        if not entries:
-            if only_day:
-                return f"📭 В *{day}* занятий нет."
-            continue
-        lines.append(f"\n{DAY_EMOJI.get(day, '📅')} *{day}*")
-        for time_val, lesson in entries:
-            time_fmt = re.sub(r'(\d{2}:\d{2})\s+(\d{2}:\d{2})', r'\1–\2', time_val)
-            lines.append(f"  ⏰ `{time_fmt}`")
-            parts = re.split(r'(?=ЛЕКЦИЯ|ПРАКТИКА|СЕМИНАР)', lesson)
-            for part in parts:
-                part = part.strip()
-                if part:
-                    lines.append(f"     {part}")
-
-    return "\n".join(lines) if lines else "⚠️ Занятий не найдено."
+    return _format_schedule(schedule, only_day)
 
 
 # ─── Поиск преподавателей ──────────────────────────────────────────────────────
 
 def _score_teacher(name_lower: str, words: list[str]) -> int:
-    """
-    Счёт релевантности:
-      +3 — слово найдено в начале токена (полное совпадение)
-      +2 — слово является началом токена (фамилия)
-      +1 — слово встречается в любом месте
-       0 — слово не найдено (результат не включается)
-    """
     tokens = name_lower.split()
     total = 0
     for word in words:
-        if word in tokens:          # точное совпадение токена
+        if word in tokens:
             total += 3
-        elif any(t.startswith(word) for t in tokens):  # начало токена
+        elif any(t.startswith(word) for t in tokens):
             total += 2
-        elif word in name_lower:    # подстрока
+        elif word in name_lower:
             total += 1
         else:
-            return 0                # хоть одно слово не найдено — исключаем
+            return 0
     return total
 
 
 def search_teachers(html: str, query: str) -> list[dict]:
-    """
-    Умный поиск преподавателей по ФИО / отдельным словам.
-
-    Примеры запросов:
-      "Иванов"
-      "Иванов Иван"
-      "Иванов Иван Иванович"
-      "Иванов И.И."
-    """
     soup = BeautifulSoup(html, "html.parser")
-
-    # Разбиваем запрос на слова, убираем пустые
     raw_words = re.split(r'[\s,.]+', query.strip().lower())
     words = [w for w in raw_words if len(w) >= 2]
-
     if not words:
         return []
 
@@ -135,25 +183,17 @@ def search_teachers(html: str, query: str) -> list[dict]:
 
     for a in soup.find_all("a"):
         link_text = clean(a.get_text())
-        href      = a.get("href", "")
-
-        # Оставляем только ссылки на расписание преподавателей
+        href = a.get("href", "")
         if not ("/schedule/" in href and len(link_text) > 3):
             continue
-
         score = _score_teacher(link_text.lower(), words)
         if score == 0:
             continue
-
         full_url = BASE_URL + href if href.startswith("/") else href
         if full_url in seen_urls:
             continue
-
         seen_urls.add(full_url)
         results.append({"name": link_text, "url": full_url, "score": score})
 
-    # Сортируем по релевантности (больше — лучше), затем по имени
     results.sort(key=lambda x: (-x["score"], x["name"]))
-
-    # Убираем вспомогательное поле score из результата
     return [{"name": r["name"], "url": r["url"]} for r in results]
