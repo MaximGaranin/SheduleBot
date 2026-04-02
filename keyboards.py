@@ -13,9 +13,12 @@ def main_keyboard(user_id: int) -> InlineKeyboardMarkup:
         ])
     rows.append([InlineKeyboardButton("📚 Расписание группы",        callback_data="group_schedule")])
     rows.append([InlineKeyboardButton("👨‍🏫 Расписание преподавателя",  callback_data="teacher_schedule")])
-    rows.append([InlineKeyboardButton("📋 История поиска",           callback_data="history")])
-    rows.append([InlineKeyboardButton("👤 Настроить профиль",        callback_data="setup_profile")])
-    rows.append([InlineKeyboardButton("ℹ️ Помощь",                   callback_data="help")])
+    rows.append([
+        InlineKeyboardButton("⭐ Избранное",       callback_data="favorites"),
+        InlineKeyboardButton("📋 История поиска",  callback_data="history"),
+    ])
+    rows.append([InlineKeyboardButton("👤 Настроить профиль",      callback_data="setup_profile")])
+    rows.append([InlineKeyboardButton("ℹ️ Помощь",                 callback_data="help")])
     return InlineKeyboardMarkup(rows)
 
 
@@ -41,14 +44,12 @@ def form_keyboard(prefix: str = "form_", back: str = "back_main") -> InlineKeybo
 
 def my_schedule_keyboard() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup([
-        [InlineKeyboardButton("📅 Полное расписание", callback_data="my_schedule"),
-         InlineKeyboardButton("🔆 На сегодня",        callback_data="today_schedule")],
-        [InlineKeyboardButton("🏠 Главное меню",      callback_data="back_main")],
+        [
+            InlineKeyboardButton("📅 Полное расписание", callback_data="my_schedule"),
+            InlineKeyboardButton("🔆 На сегодня",        callback_data="today_schedule"),
+        ],
+        [
+            InlineKeyboardButton("⭐ Избранное",    callback_data="favorites"),
+            InlineKeyboardButton("🏠 Главное меню", callback_data="back_main"),
+        ],
     ])
-
-
-def after_teacher_keyboard() -> InlineKeyboardMarkup:
-    return InlineKeyboardMarkup([[
-        InlineKeyboardButton("🔄 Другой преподаватель", callback_data="teacher_schedule"),
-        InlineKeyboardButton("🏠 Меню",                 callback_data="back_main"),
-    ]])

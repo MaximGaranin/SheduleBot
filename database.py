@@ -14,7 +14,6 @@ def get_conn() -> sqlite3.Connection:
 
 
 def init_db():
-    """Create all tables on first run."""
     with get_conn() as conn:
         conn.executescript("""
             CREATE TABLE IF NOT EXISTS profiles (
@@ -32,9 +31,7 @@ def init_db():
                 url         TEXT    NOT NULL,
                 fetched_at  TEXT    DEFAULT (datetime('now'))
             );
-
-            CREATE INDEX IF NOT EXISTS idx_teacher_query
-                ON teacher_cache (query);
+            CREATE INDEX IF NOT EXISTS idx_teacher_query ON teacher_cache (query);
 
             CREATE TABLE IF NOT EXISTS schedule_cache (
                 cache_key   TEXT    PRIMARY KEY,
@@ -49,11 +46,26 @@ def init_db():
                 query       TEXT    NOT NULL,
                 searched_at TEXT    DEFAULT (datetime('now'))
             );
+
+            CREATE TABLE IF NOT EXISTS favorites (
+                id          INTEGER PRIMARY KEY AUTOINCREMENT,
+                user_id     INTEGER NOT NULL,
+                fav_type    TEXT    NOT NULL,  -- 'group' | 'teacher'
+                label       TEXT    NOT NULL,  -- пользовательское название
+                faculty     TEXT,              -- для group
+                form        TEXT,              -- для group
+                grp         TEXT,              -- для group
+                teacher_url TEXT,              -- для teacher
+                teacher_name TEXT,             -- для teacher
+                added_at    TEXT    DEFAULT (datetime('now'))
+            );
+            CREATE UNIQUE INDEX IF NOT EXISTS idx_fav_unique
+                ON favorites (user_id, fav_type, label);
         """)
     logger.info(f"Database initialised at {DB_PATH}")
 
 
-# ─── Profiles ──────────────────────────────────────────────────────────────
+# ─── Profiles ────────────────────────────────────────────────────────────
 
 def get_profile(user_id: int) -> dict | None:
     with get_conn() as conn:
@@ -70,10 +82,8 @@ def save_profile(user_id: int, faculty: str, form: str, group: str):
             INSERT INTO profiles (user_id, faculty, form, grp, updated_at)
             VALUES (?, ?, ?, ?, datetime('now'))
             ON CONFLICT(user_id) DO UPDATE SET
-                faculty    = excluded.faculty,
-                form       = excluded.form,
-                grp        = excluded.grp,
-                updated_at = excluded.updated_at
+                faculty = excluded.faculty, form = excluded.form,
+                grp = excluded.grp, updated_at = excluded.updated_at
         """, (user_id, faculty, form, group))
 
 
@@ -82,13 +92,12 @@ def delete_profile(user_id: int):
         conn.execute("DELETE FROM profiles WHERE user_id = ?", (user_id,))
 
 
-# ─── Teacher cache ─────────────────────────────────────────────────────────
+# ─── Teacher cache ────────────────────────────────────────────────────────
 
 TEACHER_CACHE_TTL_HOURS = 6
 
 
 def get_cached_teachers(query: str) -> list[dict] | None:
-    """Return cached teacher list, or None if expired/absent."""
     with get_conn() as conn:
         rows = conn.execute("""
             SELECT name, url FROM teacher_cache
@@ -108,7 +117,7 @@ def save_cached_teachers(query: str, teachers: list[dict]):
         )
 
 
-# ─── Schedule HTML cache ───────────────────────────────────────────────────
+# ─── Schedule HTML cache ─────────────────────────────────────────────────
 
 SCHEDULE_CACHE_TTL_HOURS = 1
 
@@ -129,12 +138,11 @@ def save_cached_schedule(cache_key: str, html: str):
             INSERT INTO schedule_cache (cache_key, html, fetched_at)
             VALUES (?, ?, datetime('now'))
             ON CONFLICT(cache_key) DO UPDATE SET
-                html       = excluded.html,
-                fetched_at = excluded.fetched_at
+                html = excluded.html, fetched_at = excluded.fetched_at
         """, (cache_key, html))
 
 
-# ─── Search history ────────────────────────────────────────────────────────
+# ─── Search history ───────────────────────────────────────────────────────
 
 def add_history(user_id: int, search_type: str, query: str):
     with get_conn() as conn:
@@ -147,10 +155,80 @@ def add_history(user_id: int, search_type: str, query: str):
 def get_history(user_id: int, limit: int = 10) -> list[dict]:
     with get_conn() as conn:
         rows = conn.execute("""
-            SELECT search_type, query, searched_at
-            FROM search_history
-            WHERE user_id = ?
-            ORDER BY searched_at DESC
-            LIMIT ?
+            SELECT search_type, query, searched_at FROM search_history
+            WHERE user_id = ? ORDER BY searched_at DESC LIMIT ?
         """, (user_id, limit)).fetchall()
     return [dict(r) for r in rows]
+
+
+# ─── Favorites ────────────────────────────────────────────────────────────
+
+MAX_FAVORITES = 20
+
+
+def get_favorites(user_id: int) -> list[dict]:
+    with get_conn() as conn:
+        rows = conn.execute(
+            "SELECT * FROM favorites WHERE user_id = ? ORDER BY added_at DESC",
+            (user_id,)
+        ).fetchall()
+    return [dict(r) for r in rows]
+
+
+def add_favorite_group(
+    user_id: int, label: str,
+    faculty: str, form: str, grp: str
+) -> bool:
+    """Returns False if limit reached or duplicate."""
+    with get_conn() as conn:
+        count = conn.execute(
+            "SELECT COUNT(*) FROM favorites WHERE user_id = ?", (user_id,)
+        ).fetchone()[0]
+        if count >= MAX_FAVORITES:
+            return False
+        try:
+            conn.execute("""
+                INSERT INTO favorites (user_id, fav_type, label, faculty, form, grp)
+                VALUES (?, 'group', ?, ?, ?, ?)
+            """, (user_id, label, faculty, form, grp))
+            return True
+        except Exception:
+            return False
+
+
+def add_favorite_teacher(
+    user_id: int, label: str,
+    teacher_name: str, teacher_url: str
+) -> bool:
+    with get_conn() as conn:
+        count = conn.execute(
+            "SELECT COUNT(*) FROM favorites WHERE user_id = ?", (user_id,)
+        ).fetchone()[0]
+        if count >= MAX_FAVORITES:
+            return False
+        try:
+            conn.execute("""
+                INSERT INTO favorites
+                    (user_id, fav_type, label, teacher_name, teacher_url)
+                VALUES (?, 'teacher', ?, ?, ?)
+            """, (user_id, label, teacher_name, teacher_url))
+            return True
+        except Exception:
+            return False
+
+
+def delete_favorite(user_id: int, fav_id: int):
+    with get_conn() as conn:
+        conn.execute(
+            "DELETE FROM favorites WHERE id = ? AND user_id = ?",
+            (fav_id, user_id)
+        )
+
+
+def get_favorite_by_id(fav_id: int, user_id: int) -> dict | None:
+    with get_conn() as conn:
+        row = conn.execute(
+            "SELECT * FROM favorites WHERE id = ? AND user_id = ?",
+            (fav_id, user_id)
+        ).fetchone()
+    return dict(row) if row else None

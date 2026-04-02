@@ -24,6 +24,10 @@ from handlers.schedule import (
 from handlers.teacher import (
     ask_teacher_name, teacher_query_entered, teacher_number_entered,
 )
+from handlers.favorites import (
+    show_favorites, open_favorite, delete_favorite_handler,
+    add_group_to_fav_handler, add_teacher_to_fav_handler,
+)
 
 logging.basicConfig(
     format="%(asctime)s %(name)s %(levelname)s %(message)s",
@@ -33,7 +37,6 @@ logger = logging.getLogger(__name__)
 
 
 def make_request(read_timeout: float = 30.0) -> HTTPXRequest:
-    """Build HTTPXRequest, optionally with proxy from config."""
     kwargs = dict(
         connect_timeout=20.0,
         read_timeout=read_timeout,
@@ -51,19 +54,28 @@ async def main_menu_router(update: Update, context):
     await query.answer()
     d = query.data
 
-    if d == "group_schedule":   return await show_faculties(update, context)
-    if d == "teacher_schedule": return await ask_teacher_name(update, context)
-    if d == "setup_profile":    return await setup_profile_start(update, context)
-    if d == "my_schedule":      return await show_my_schedule(update, context)
-    if d == "today_schedule":   return await show_my_schedule(update, context, only_day="today")
-    if d == "back_main":        return await start(update, context)
-    if d == "help":             return await help_handler(update, context)
-    if d == "history":          return await history_handler(update, context)
+    if d == "group_schedule":     return await show_faculties(update, context)
+    if d == "teacher_schedule":   return await ask_teacher_name(update, context)
+    if d == "setup_profile":      return await setup_profile_start(update, context)
+    if d == "my_schedule":        return await show_my_schedule(update, context)
+    if d == "today_schedule":     return await show_my_schedule(update, context, only_day="today")
+    if d == "back_main":          return await start(update, context)
+    if d == "help":               return await help_handler(update, context)
+    if d == "history":            return await history_handler(update, context)
+    if d == "favorites":          return await show_favorites(update, context)
+    if d.startswith("fav_open_"): return await open_favorite(update, context)
+    if d.startswith("fav_del_"):  return await delete_favorite_handler(update, context)
+    if d.startswith("fav_add_group"):   return await add_group_to_fav_handler(update, context)
+    if d.startswith("fav_add_teacher"): return await add_teacher_to_fav_handler(update, context)
     return MAIN_MENU
 
 
 def build_conv() -> ConversationHandler:
     digits = filters.TEXT & ~filters.COMMAND & filters.Regex(r'^\d{2,4}$')
+    fav_cb = CallbackQueryHandler(
+        main_menu_router,
+        pattern=r"^(favorites|fav_open_|fav_del_|fav_add_group|fav_add_teacher)"
+    )
     return ConversationHandler(
         entry_points=[
             CommandHandler("start", start),
@@ -71,6 +83,7 @@ def build_conv() -> ConversationHandler:
         ],
         states={
             MAIN_MENU: [
+                fav_cb,
                 CallbackQueryHandler(main_menu_router),
                 MessageHandler(digits, quick_group_input),
             ],

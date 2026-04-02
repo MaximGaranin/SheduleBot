@@ -52,6 +52,19 @@ async def form_chosen(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int
     return ENTER_GROUP
 
 
+def _after_schedule_keyboard(faculty: str, form: str, grp: str) -> InlineKeyboardMarkup:
+    fav_data = f"fav_add_group|fav|add|{faculty}|{form}|{grp}"
+    return InlineKeyboardMarkup([
+        [
+            InlineKeyboardButton("⭐ В избранное", callback_data=fav_data),
+            InlineKeyboardButton("🔄 Ещё группу",    callback_data="group_schedule"),
+        ],
+        [
+            InlineKeyboardButton("🏠 Главное меню", callback_data="back_main"),
+        ],
+    ])
+
+
 async def _fetch_and_send(
     message_obj, user_id: int,
     faculty: str, form: str, group: str,
@@ -73,7 +86,7 @@ async def _fetch_and_send(
         f"🏛️ {faculty_name}\n"
         f"📋 {form_name}\n"
         f"🔗 [Открыть на сайте]({url})\n"
-        f"{'─'*28}\n"
+        f"{─*28}\n"
     )
     await msg.delete()
     await send_long(message_obj, header + schedule_text)
@@ -89,32 +102,35 @@ async def group_entered(update: Update, context: ContextTypes.DEFAULT_TYPE) -> i
         await update.message.reply_text("❌ Неверный формат группы.")
         return ENTER_GROUP
 
+    faculty   = context.user_data["faculty"]
+    form      = context.user_data["form"]
+    fac_name  = context.user_data["faculty_name"]
+    form_name = context.user_data["form_name"]
     ok = await _fetch_and_send(
         update.message, update.effective_user.id,
-        context.user_data["faculty"], context.user_data["form"], group,
-        context.user_data["faculty_name"], context.user_data["form_name"],
+        faculty, form, group, fac_name, form_name,
     )
     if ok:
-        await update.message.reply_text("Что дальше?", reply_markup=my_schedule_keyboard())
+        await update.message.reply_text(
+            "Что дальше?",
+            reply_markup=_after_schedule_keyboard(faculty, form, group)
+        )
     return MAIN_MENU
 
 
 async def quick_group_input(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    """Triggered when user types only digits — searches in profile faculty."""
-    text = update.message.text.strip()
+    text    = update.message.text.strip()
     if not re.match(r'^\d{2,4}$', text):
         return MAIN_MENU
-
     user_id = update.effective_user.id
     profile = get_profile(user_id)
     if not profile:
         from keyboards import main_keyboard
         await update.message.reply_text(
-            "❓ Профиль не настроен. Выберите факультет через меню.",
+            "❓ Профиль не настроен.",
             reply_markup=main_keyboard(user_id)
         )
         return MAIN_MENU
-
     fac_name  = FACULTIES.get(profile["faculty"], profile["faculty"])
     form_name = STUDY_FORMS.get(profile["form"],   profile["form"])
     ok = await _fetch_and_send(
@@ -123,7 +139,10 @@ async def quick_group_input(update: Update, context: ContextTypes.DEFAULT_TYPE) 
         fac_name, form_name,
     )
     if ok:
-        await update.message.reply_text("Что дальше?", reply_markup=my_schedule_keyboard())
+        await update.message.reply_text(
+            "Что дальше?",
+            reply_markup=_after_schedule_keyboard(profile["faculty"], profile["form"], text)
+        )
     return MAIN_MENU
 
 
@@ -162,11 +181,13 @@ async def show_my_schedule(
     ok = await _fetch_and_send(
         update.effective_message, user_id,
         profile["faculty"], profile["form"], profile["grp"],
-        fac_name, form_name,
-        only_day=day_filter,
+        fac_name, form_name, only_day=day_filter,
     )
     if ok:
         await update.effective_message.reply_text(
-            "Что дальше?", reply_markup=my_schedule_keyboard()
+            "Что дальше?",
+            reply_markup=_after_schedule_keyboard(
+                profile["faculty"], profile["form"], profile["grp"]
+            )
         )
     return MAIN_MENU
