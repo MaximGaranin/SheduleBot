@@ -134,12 +134,10 @@ async def _load_teacher_schedule(update: Update, context: ContextTypes.DEFAULT_T
         + schedule_text
     )
     await msg.delete()
-    await send_long(update.effective_message, full_text)
-
-    # Кнопки отправляем отдельным сообщением в чат — не reply к пользователю
-    await context.bot.send_message(
-        chat_id=update.effective_chat.id,
-        text="Что дальше?",
+    # Кнопки прикрепляются к последнему чанку расписания
+    await send_long(
+        update.effective_message,
+        full_text,
         reply_markup=_after_teacher_keyboard(teacher["name"], teacher["url"])
     )
     return MAIN_MENU
