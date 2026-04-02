@@ -4,7 +4,7 @@ from telegram.ext import ContextTypes
 from config import BASE_URL, MAIN_MENU, ENTER_TEACHER, TEACHER_SELECT_NUMBER
 from database import get_cached_teachers, save_cached_teachers, add_history
 from fetcher import fetch_page
-from parser import parse_schedule_html, search_teachers
+from parser import parse_schedule_html, search_teachers, _score_teacher
 from utils import send_long
 
 DIVIDER = "─" * 28
@@ -13,14 +13,15 @@ DIVIDER = "─" * 28
 def _after_teacher_keyboard(teacher_name: str, teacher_url: str) -> InlineKeyboardMarkup:
     fav_data = f"fav_add_teacher|fav|add|{teacher_name}|{teacher_url}"
     return InlineKeyboardMarkup([[
-        InlineKeyboardButton("⭐ В избранное",      callback_data=fav_data),
-        InlineKeyboardButton("🔄 Другой преподаватель", callback_data="teacher_schedule"),
+        InlineKeyboardButton("⭐ В избранное",           callback_data=fav_data),
+        InlineKeyboardButton("🔄 Другой преподаватель",  callback_data="teacher_schedule"),
     ], [
         InlineKeyboardButton("🏠 Главное меню", callback_data="back_main"),
     ]])
 
 
 async def ask_teacher_name(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    """Called from button — show hint and wait for input."""
     query = update.callback_query
     await query.edit_message_text(
         "👨‍🏫 *Поиск преподавателя*\n\n"
@@ -35,6 +36,10 @@ async def ask_teacher_name(update: Update, context: ContextTypes.DEFAULT_TYPE) -
 
 
 async def teacher_query_entered(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    """
+    Обработка текстового ввода ФИО.
+    Вызывается как из MAIN_MENU (прямой ввод), так и из ENTER_TEACHER (после кнопки).
+    """
     text = update.message.text.strip()
 
     # Если ввели только цифру — выбор из списка
@@ -42,12 +47,13 @@ async def teacher_query_entered(update: Update, context: ContextTypes.DEFAULT_TY
         return await teacher_number_entered(update, context)
 
     if len(text) < 2:
-        await update.message.reply_text("❌ Введите минимум 2 символа.")
+        await update.message.reply_text(
+            "❌ Слишком коротко. Введите фамилию."
+        )
         return ENTER_TEACHER
 
-    # Проверяем, похоже ли ввод на ФИО (есть русские буквы)
-    is_fio = bool(re.search(r'[А-яЁё]', text))
-    if not is_fio:
+    # Валидация: есть ли русские буквы
+    if not re.search(r'[А-яЁё]', text):
         await update.message.reply_text(
             "❌ Введите фамилию на русском языке.\n"
             "Пример: `Иванов` или `Иванов Иван Иванович`",
@@ -60,36 +66,29 @@ async def teacher_query_entered(update: Update, context: ContextTypes.DEFAULT_TY
         parse_mode="Markdown"
     )
 
-    # Кэш по первому слову (фамилия, быстрее находит)
+    # Кэш по первому слову
     first_word = text.split()[0]
-    results = get_cached_teachers(first_word)
-    source  = "кэш"
+    results    = get_cached_teachers(first_word)
+    source     = "кэш"
 
     if results is None:
         html = await fetch_page(f"{BASE_URL}/schedule", use_cache=False)
         if not html:
             await msg.edit_text("❌ Не удалось подключиться к сайту СГУ.")
             return MAIN_MENU
-        # Ищем с умным поиском по всему запросу
         results = search_teachers(html, text)
-        # Кэшируем по первому слову
         if results:
             save_cached_teachers(first_word, results)
         source = "сайт"
-    else:
-        # Если в запросе несколько слов — дофильтруем кэш по остальным словам
-        if len(text.split()) > 1:
-            from parser import _score_teacher
-            words = [w for w in re.split(r'[\s,.]+', text.lower()) if len(w) >= 2]
-            results = [
-                r for r in results
-                if _score_teacher(r["name"].lower(), words) > 0
-            ]
+    elif len(text.split()) > 1:
+        # Дофильтрация кэша по остальным словам
+        words   = [w for w in re.split(r'[\s,.]+', text.lower()) if len(w) >= 2]
+        results = [r for r in results if _score_teacher(r["name"].lower(), words) > 0]
 
     if not results:
         await msg.edit_text(
             f"❌ По запросу *{text}* никого не найдено.\n"
-            f"Попробуйте ввести только фамилию.",
+            "Попробуйте ввести только фамилию.",
             parse_mode="Markdown"
         )
         return ENTER_TEACHER
@@ -105,7 +104,7 @@ async def teacher_query_entered(update: Update, context: ContextTypes.DEFAULT_TY
 
     context.user_data["teacher_results"] = results
     lines = [f"🔍 *Найдено {len(results)} преподавателя* ({source}):\n"]
-    for i, t in enumerate(results[:20], 1):   # ограничиваем до 20
+    for i, t in enumerate(results[:20], 1):
         lines.append(f"*{i}.* {t['name']}")
     if len(results) > 20:
         lines.append(f"\n_…и ещё {len(results) - 20}. Уточните запрос._")
@@ -125,9 +124,7 @@ async def teacher_number_entered(update: Update, context: ContextTypes.DEFAULT_T
         return ENTER_TEACHER
     num = int(text)
     if num < 1 or num > min(len(results), 20):
-        await update.message.reply_text(
-            f"❌ Введите число от 1 до {min(len(results), 20)}."
-        )
+        await update.message.reply_text(f"❌ Введите число от 1 до {min(len(results), 20)}.")
         return TEACHER_SELECT_NUMBER
     return await _load_teacher_schedule(update, results[num - 1])
 

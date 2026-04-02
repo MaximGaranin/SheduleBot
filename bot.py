@@ -35,6 +35,11 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
+# Фильтр: текст содержит хотя бы 2 русских буквы подряд (ФИО)
+FIO_FILTER = filters.TEXT & ~filters.COMMAND & filters.Regex(r'[А-яЁё]{2,}')
+# Фильтр: только цифры (номер группы)
+DIGITS_FILTER = filters.TEXT & ~filters.COMMAND & filters.Regex(r'^\d{2,4}$')
+
 
 def make_request(read_timeout: float = 30.0) -> HTTPXRequest:
     kwargs = dict(
@@ -71,7 +76,6 @@ async def main_menu_router(update: Update, context):
 
 
 def build_conv() -> ConversationHandler:
-    digits = filters.TEXT & ~filters.COMMAND & filters.Regex(r'^\d{2,4}$')
     fav_cb = CallbackQueryHandler(
         main_menu_router,
         pattern=r"^(favorites|fav_open_|fav_del_|fav_add_group|fav_add_teacher)"
@@ -79,23 +83,28 @@ def build_conv() -> ConversationHandler:
     return ConversationHandler(
         entry_points=[
             CommandHandler("start", start),
-            MessageHandler(digits, quick_group_input),
+            # Ввод цифр — быстрый поиск группы
+            MessageHandler(DIGITS_FILTER, quick_group_input),
+            # Ввод русского текста — мгновенный поиск препода
+            MessageHandler(FIO_FILTER, teacher_query_entered),
         ],
         states={
             MAIN_MENU: [
                 fav_cb,
                 CallbackQueryHandler(main_menu_router),
-                MessageHandler(digits, quick_group_input),
+                MessageHandler(DIGITS_FILTER, quick_group_input),
+                # Из главного меню тоже можно ввести ФИО
+                MessageHandler(FIO_FILTER, teacher_query_entered),
             ],
             CHOOSE_FACULTY: [
                 CallbackQueryHandler(faculty_chosen, pattern=r"^fac_"),
                 CallbackQueryHandler(start, pattern=r"^back_main$"),
-                MessageHandler(digits, quick_group_input),
+                MessageHandler(DIGITS_FILTER, quick_group_input),
             ],
             CHOOSE_FORM: [
                 CallbackQueryHandler(form_chosen, pattern=r"^form_"),
                 CallbackQueryHandler(start, pattern=r"^back_main$"),
-                MessageHandler(digits, quick_group_input),
+                MessageHandler(DIGITS_FILTER, quick_group_input),
             ],
             ENTER_GROUP: [
                 MessageHandler(filters.TEXT & ~filters.COMMAND, group_entered),
@@ -107,6 +116,7 @@ def build_conv() -> ConversationHandler:
             ],
             TEACHER_SELECT_NUMBER: [
                 MessageHandler(filters.TEXT & ~filters.COMMAND, teacher_number_entered),
+                # Новый ФИО в этом состоянии — новый поиск
                 CallbackQueryHandler(start, pattern=r"^back_main$"),
             ],
             SETUP_FACULTY: [
