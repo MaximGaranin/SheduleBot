@@ -36,7 +36,7 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 # Фильтр: текст содержит хотя бы 2 русских буквы подряд (ФИО)
-FIO_FILTER = filters.TEXT & ~filters.COMMAND & filters.Regex(r'[А-яЁё]{2,}')
+FIO_FILTER    = filters.TEXT & ~filters.COMMAND & filters.Regex(r'[А-яЁё]{2,}')
 # Фильтр: только цифры (номер группы)
 DIGITS_FILTER = filters.TEXT & ~filters.COMMAND & filters.Regex(r'^\d{2,4}$')
 
@@ -83,9 +83,7 @@ def build_conv() -> ConversationHandler:
     return ConversationHandler(
         entry_points=[
             CommandHandler("start", start),
-            # Ввод цифр — быстрый поиск группы
             MessageHandler(DIGITS_FILTER, quick_group_input),
-            # Ввод русского текста — мгновенный поиск препода
             MessageHandler(FIO_FILTER, teacher_query_entered),
         ],
         states={
@@ -93,7 +91,6 @@ def build_conv() -> ConversationHandler:
                 fav_cb,
                 CallbackQueryHandler(main_menu_router),
                 MessageHandler(DIGITS_FILTER, quick_group_input),
-                # Из главного меню тоже можно ввести ФИО
                 MessageHandler(FIO_FILTER, teacher_query_entered),
             ],
             CHOOSE_FACULTY: [
@@ -114,9 +111,11 @@ def build_conv() -> ConversationHandler:
                 MessageHandler(filters.TEXT & ~filters.COMMAND, teacher_query_entered),
                 CallbackQueryHandler(start, pattern=r"^back_main$"),
             ],
+            # В этом состоянии DIGITS_FILTER должен обрабатываться первым,
+            # чтобы цифра не уходила в quick_group_input
             TEACHER_SELECT_NUMBER: [
+                MessageHandler(DIGITS_FILTER, teacher_number_entered),
                 MessageHandler(filters.TEXT & ~filters.COMMAND, teacher_number_entered),
-                # Новый ФИО в этом состоянии — новый поиск
                 CallbackQueryHandler(start, pattern=r"^back_main$"),
             ],
             SETUP_FACULTY: [
