@@ -21,7 +21,6 @@ def _after_teacher_keyboard(teacher_name: str, teacher_url: str) -> InlineKeyboa
 
 
 async def ask_teacher_name(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    """Called from button — show hint and wait for input."""
     query = update.callback_query
     await query.edit_message_text(
         "👨‍🏫 *Поиск преподавателя*\n\n"
@@ -36,13 +35,8 @@ async def ask_teacher_name(update: Update, context: ContextTypes.DEFAULT_TYPE) -
 
 
 async def teacher_query_entered(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    """
-    Обработка текстового ввода ФИО.
-    Вызывается как из MAIN_MENU (прямой ввод), так и из ENTER_TEACHER (после кнопки).
-    """
     text = update.message.text.strip()
 
-    # Если ввели только цифру — выбор из списка
     if re.match(r'^\d+$', text):
         return await teacher_number_entered(update, context)
 
@@ -50,7 +44,6 @@ async def teacher_query_entered(update: Update, context: ContextTypes.DEFAULT_TY
         await update.message.reply_text("❌ Слишком коротко. Введите фамилию.")
         return ENTER_TEACHER
 
-    # Валидация: есть ли русские буквы
     if not re.search(r'[А-яЁё]', text):
         await update.message.reply_text(
             "❌ Введите фамилию на русском языке.\n"
@@ -64,7 +57,6 @@ async def teacher_query_entered(update: Update, context: ContextTypes.DEFAULT_TY
         parse_mode="Markdown"
     )
 
-    # Кэш по первому слову
     first_word = text.split()[0]
     results    = get_cached_teachers(first_word)
     source     = "кэш"
@@ -79,7 +71,6 @@ async def teacher_query_entered(update: Update, context: ContextTypes.DEFAULT_TY
             save_cached_teachers(first_word, results)
         source = "сайт"
     elif len(text.split()) > 1:
-        # Дофильтрация кэша по остальным словам
         words   = [w for w in re.split(r'[\s,.]+', text.lower()) if len(w) >= 2]
         results = [r for r in results if _score_teacher(r["name"].lower(), words) > 0]
 
@@ -98,9 +89,8 @@ async def teacher_query_entered(update: Update, context: ContextTypes.DEFAULT_TY
             f"✅ Найден: *{results[0]['name']}* ({source})",
             parse_mode="Markdown"
         )
-        return await _load_teacher_schedule(update, results[0])
+        return await _load_teacher_schedule(update, context, results[0])
 
-    # Показываем ВСЕХ найденных без ограничений
     context.user_data["teacher_results"] = results
     lines = [f"🔍 *Найдено {len(results)} преподавателя* ({source}):\n"]
     for i, t in enumerate(results, 1):
@@ -123,11 +113,11 @@ async def teacher_number_entered(update: Update, context: ContextTypes.DEFAULT_T
     if num < 1 or num > len(results):
         await update.message.reply_text(f"❌ Введите число от 1 до {len(results)}.")
         return TEACHER_SELECT_NUMBER
-    return await _load_teacher_schedule(update, results[num - 1])
+    return await _load_teacher_schedule(update, context, results[num - 1])
 
 
-async def _load_teacher_schedule(update: Update, teacher: dict) -> int:
-    msg = await update.message.reply_text(
+async def _load_teacher_schedule(update: Update, context: ContextTypes.DEFAULT_TYPE, teacher: dict) -> int:
+    msg = await update.effective_message.reply_text(
         f"⏳ Загружаю расписание *{teacher['name']}*...",
         parse_mode="Markdown"
     )
@@ -135,6 +125,7 @@ async def _load_teacher_schedule(update: Update, teacher: dict) -> int:
     if not html:
         await msg.edit_text("❌ Не удалось загрузить расписание.")
         return MAIN_MENU
+
     schedule_text = parse_schedule_html(html)
     full_text = (
         f"👨‍🏫 *{teacher['name']}*\n"
@@ -143,9 +134,12 @@ async def _load_teacher_schedule(update: Update, teacher: dict) -> int:
         + schedule_text
     )
     await msg.delete()
-    await send_long(update.message, full_text)
-    await update.message.reply_text(
-        "Что дальше?",
+    await send_long(update.effective_message, full_text)
+
+    # Кнопки отправляем отдельным сообщением в чат — не reply к пользователю
+    await context.bot.send_message(
+        chat_id=update.effective_chat.id,
+        text="Что дальше?",
         reply_markup=_after_teacher_keyboard(teacher["name"], teacher["url"])
     )
     return MAIN_MENU
