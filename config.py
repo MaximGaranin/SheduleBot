@@ -1,6 +1,15 @@
 BOT_TOKEN = "YOUR_BOT_TOKEN_HERE"
 BASE_URL = "https://www.sgu.ru"
 
+# --- Прокси для доступа к Telegram (нужен если Telegram заблокирован) ---
+# Варианты:
+#   SOCKS5: "socks5://user:pass@host:port" или "socks5://host:port"
+#   HTTP:   "http://user:pass@host:port"  или "http://host:port"
+#   Без прокси: оставьте PROXY = None
+PROXY = None
+# Пример: PROXY = "socks5://127.0.0.1:1080"
+# Пример: PROXY = "http://127.0.0.1:8080"
+
 FACULTIES = {
     "knt":   "КНиТ",
     "mmf":   "Механико-математический",

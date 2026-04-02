@@ -6,7 +6,7 @@ from telegram.ext import (
 )
 from telegram.request import HTTPXRequest
 from config import (
-    BOT_TOKEN,
+    BOT_TOKEN, PROXY,
     MAIN_MENU, CHOOSE_FACULTY, CHOOSE_FORM, ENTER_GROUP,
     ENTER_TEACHER, SETUP_FACULTY, SETUP_FORM, SETUP_GROUP,
     TEACHER_SELECT_NUMBER,
@@ -30,6 +30,20 @@ logging.basicConfig(
     level=logging.INFO,
 )
 logger = logging.getLogger(__name__)
+
+
+def make_request(read_timeout: float = 30.0) -> HTTPXRequest:
+    """Build HTTPXRequest, optionally with proxy from config."""
+    kwargs = dict(
+        connect_timeout=20.0,
+        read_timeout=read_timeout,
+        write_timeout=30.0,
+        pool_timeout=10.0,
+    )
+    if PROXY:
+        kwargs["proxy"] = PROXY
+        logger.info(f"Using proxy: {PROXY}")
+    return HTTPXRequest(**kwargs)
 
 
 async def main_menu_router(update: Update, context):
@@ -102,30 +116,13 @@ def build_conv() -> ConversationHandler:
 
 def main():
     init_db()
-
-    # Увеличенные таймауты для нестабильных соединений
-    request = HTTPXRequest(
-        connect_timeout=20.0,
-        read_timeout=30.0,
-        write_timeout=30.0,
-        pool_timeout=10.0,
-    )
-
     app = (
         Application.builder()
         .token(BOT_TOKEN)
-        .request(request)
-        .get_updates_request(
-            HTTPXRequest(
-                connect_timeout=20.0,
-                read_timeout=40.0,  # долгий polling
-                write_timeout=30.0,
-                pool_timeout=10.0,
-            )
-        )
+        .request(make_request(read_timeout=30.0))
+        .get_updates_request(make_request(read_timeout=40.0))
         .build()
     )
-
     app.add_handler(build_conv())
     logger.info("SGU Bot started.")
     app.run_polling(drop_pending_updates=True)
