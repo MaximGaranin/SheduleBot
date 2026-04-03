@@ -1,10 +1,11 @@
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup
 from config import FACULTIES, STUDY_FORMS
-from database import get_profile
+from database import get_profile, is_notify_subscribed
 
 
 def main_keyboard(user_id: int) -> InlineKeyboardMarkup:
-    profile = get_profile(user_id)
+    profile    = get_profile(user_id)
+    subscribed = is_notify_subscribed(user_id)
     rows = []
     if profile:
         rows.append([
@@ -12,11 +13,15 @@ def main_keyboard(user_id: int) -> InlineKeyboardMarkup:
             InlineKeyboardButton("🔆 На сегодня",     callback_data="today_schedule"),
         ])
     rows.append([InlineKeyboardButton("📚 Расписание группы",        callback_data="group_schedule")])
-    rows.append([InlineKeyboardButton("👨‍🏫 Расписание преподавателя",  callback_data="teacher_schedule")])
+    rows.append([InlineKeyboardButton("👨\u200d🏫 Расписание преподавателя",  callback_data="teacher_schedule")])
     rows.append([
         InlineKeyboardButton("⭐ Избранное",       callback_data="favorites"),
         InlineKeyboardButton("📋 История поиска",  callback_data="history"),
     ])
+    # Кнопка уведомлений — показываем только при наличии профиля
+    if profile:
+        notify_label = "🔕 Отключить уведомления" if subscribed else "🔔 Уведомления о расписании"
+        rows.append([InlineKeyboardButton(notify_label, callback_data="toggle_notify")])
     rows.append([InlineKeyboardButton("👤 Настроить профиль",      callback_data="setup_profile")])
     rows.append([InlineKeyboardButton("ℹ️ Помощь",                 callback_data="help")])
     return InlineKeyboardMarkup(rows)

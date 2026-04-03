@@ -50,17 +50,23 @@ def init_db():
             CREATE TABLE IF NOT EXISTS favorites (
                 id          INTEGER PRIMARY KEY AUTOINCREMENT,
                 user_id     INTEGER NOT NULL,
-                fav_type    TEXT    NOT NULL,  -- 'group' | 'teacher'
-                label       TEXT    NOT NULL,  -- пользовательское название
-                faculty     TEXT,              -- для group
-                form        TEXT,              -- для group
-                grp         TEXT,              -- для group
-                teacher_url TEXT,              -- для teacher
-                teacher_name TEXT,             -- для teacher
+                fav_type    TEXT    NOT NULL,
+                label       TEXT    NOT NULL,
+                faculty     TEXT,
+                form        TEXT,
+                grp         TEXT,
+                teacher_url TEXT,
+                teacher_name TEXT,
                 added_at    TEXT    DEFAULT (datetime('now'))
             );
             CREATE UNIQUE INDEX IF NOT EXISTS idx_fav_unique
                 ON favorites (user_id, fav_type, label);
+
+            CREATE TABLE IF NOT EXISTS notify_subscriptions (
+                user_id    INTEGER PRIMARY KEY,
+                active     INTEGER NOT NULL DEFAULT 1,
+                updated_at TEXT    DEFAULT (datetime('now'))
+            );
         """)
     logger.info(f"Database initialised at {DB_PATH}")
 
@@ -179,7 +185,6 @@ def add_favorite_group(
     user_id: int, label: str,
     faculty: str, form: str, grp: str
 ) -> bool:
-    """Returns False if limit reached or duplicate."""
     with get_conn() as conn:
         count = conn.execute(
             "SELECT COUNT(*) FROM favorites WHERE user_id = ?", (user_id,)
@@ -232,3 +237,34 @@ def get_favorite_by_id(fav_id: int, user_id: int) -> dict | None:
             (fav_id, user_id)
         ).fetchone()
     return dict(row) if row else None
+
+
+# ─── Notify subscriptions ─────────────────────────────────────────────────
+
+def is_notify_subscribed(user_id: int) -> bool:
+    with get_conn() as conn:
+        row = conn.execute(
+            "SELECT active FROM notify_subscriptions WHERE user_id = ?",
+            (user_id,)
+        ).fetchone()
+    return bool(row and row["active"])
+
+
+def set_notify_subscription(user_id: int, active: bool):
+    with get_conn() as conn:
+        conn.execute("""
+            INSERT INTO notify_subscriptions (user_id, active, updated_at)
+            VALUES (?, ?, datetime('now'))
+            ON CONFLICT(user_id) DO UPDATE SET
+                active = excluded.active,
+                updated_at = excluded.updated_at
+        """, (user_id, int(active)))
+
+
+def get_notify_subscribers() -> list[int]:
+    """Return all user_ids with active notifications."""
+    with get_conn() as conn:
+        rows = conn.execute(
+            "SELECT user_id FROM notify_subscriptions WHERE active = 1"
+        ).fetchall()
+    return [r["user_id"] for r in rows]

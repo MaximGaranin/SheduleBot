@@ -1,4 +1,5 @@
 import logging
+from zoneinfo import ZoneInfo
 from telegram import Update
 from telegram.ext import (
     Application, CommandHandler, CallbackQueryHandler,
@@ -28,6 +29,7 @@ from handlers.favorites import (
     show_favorites, open_favorite, delete_favorite_handler,
     add_group_to_fav_handler, add_teacher_to_fav_handler,
 )
+from handlers.notify import toggle_notify, job_evening, job_morning
 
 logging.basicConfig(
     format="%(asctime)s %(name)s %(levelname)s %(message)s",
@@ -35,10 +37,9 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-# Фильтр: текст содержит хотя бы 2 русских буквы подряд (ФИО)
 FIO_FILTER    = filters.TEXT & ~filters.COMMAND & filters.Regex(r'[А-яЁё]{2,}')
-# Фильтр: только цифры (номер группы)
 DIGITS_FILTER = filters.TEXT & ~filters.COMMAND & filters.Regex(r'^\d{2,4}$')
+MSK = ZoneInfo("Europe/Moscow")
 
 
 def make_request(read_timeout: float = 30.0) -> HTTPXRequest:
@@ -64,6 +65,7 @@ async def main_menu_router(update: Update, context):
     if d == "setup_profile":      return await setup_profile_start(update, context)
     if d == "my_schedule":        return await show_my_schedule(update, context)
     if d == "today_schedule":     return await show_my_schedule(update, context, only_day="today")
+    if d == "toggle_notify":      return await toggle_notify(update, context)
     if d == "back_main":          return await start(update, context)
     if d == "help":               return await help_handler(update, context)
     if d == "history":            return await history_handler(update, context)
@@ -83,9 +85,6 @@ def build_conv() -> ConversationHandler:
     return ConversationHandler(
         entry_points=[
             CommandHandler("start", start),
-            # DIGITS_FILTER убран из entry_points — цифры внутри диалога
-            # должны обрабатываться через states, иначе выбор преподавателя
-            # по номеру перехватывается quick_group_input
             MessageHandler(FIO_FILTER, teacher_query_entered),
         ],
         states={
@@ -146,7 +145,23 @@ def main():
         .build()
     )
     app.add_handler(build_conv())
-    logger.info("SGU Bot started.")
+
+    # ── Scheduled notifications (APScheduler via JobQueue) ──
+    jq = app.job_queue
+    # 22:00 MSK — tomorrow's schedule
+    jq.run_daily(
+        job_evening,
+        time=__import__('datetime').time(22, 0, 0, tzinfo=MSK),
+        name="notify_evening",
+    )
+    # 08:00 MSK — today's schedule
+    jq.run_daily(
+        job_morning,
+        time=__import__('datetime').time(8, 0, 0, tzinfo=MSK),
+        name="notify_morning",
+    )
+
+    logger.info("SGU Bot started. Notification jobs scheduled (08:00 & 22:00 MSK).")
     app.run_polling(drop_pending_updates=True)
 
 
