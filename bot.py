@@ -1,3 +1,4 @@
+import asyncio
 import logging
 import datetime
 from zoneinfo import ZoneInfo
@@ -136,7 +137,8 @@ def build_conv() -> ConversationHandler:
     )
 
 
-def main():
+async def _run():
+    """Async entry point — required for Python 3.10+ / 3.14."""
     init_db()
     app = (
         Application.builder()
@@ -147,15 +149,12 @@ def main():
     )
     app.add_handler(build_conv())
 
-    # ── Scheduled notifications ──
     jq = app.job_queue
-    # 22:00 по местному времени — расписание на завтра
     jq.run_daily(
         job_evening,
         time=datetime.time(22, 0, 0, tzinfo=LOCAL_TZ),
         name="notify_evening",
     )
-    # 08:00 по местному времени — расписание на сегодня
     jq.run_daily(
         job_morning,
         time=datetime.time(8, 0, 0, tzinfo=LOCAL_TZ),
@@ -163,8 +162,8 @@ def main():
     )
 
     logger.info(f"SGU Bot started. Notifications at 08:00 & 22:00 {TIMEZONE}.")
-    app.run_polling(drop_pending_updates=True)
+    await app.run_polling(drop_pending_updates=True)
 
 
 if __name__ == "__main__":
-    main()
+    asyncio.run(_run())
