@@ -10,10 +10,12 @@ from utils import send_long
 DIVIDER = "─" * 28
 
 
-def _after_teacher_keyboard(teacher_name: str, teacher_url: str) -> InlineKeyboardMarkup:
-    fav_data = f"fav_add_teacher|fav|add|{teacher_name}|{teacher_url}"
+def _after_teacher_keyboard() -> InlineKeyboardMarkup:
+    """Кнопки после расписания преподавателя.
+    Данные учителя хранятся в context.user_data['last_teacher'],
+    поэтому callback_data не превышает 64 байта."""
     return InlineKeyboardMarkup([[
-        InlineKeyboardButton("⭐ В избранное",           callback_data=fav_data),
+        InlineKeyboardButton("⭐ В избранное",           callback_data="fav_add_teacher"),
         InlineKeyboardButton("🔄 Другой преподаватель",  callback_data="teacher_schedule"),
     ], [
         InlineKeyboardButton("🏠 Главное меню", callback_data="back_main"),
@@ -117,6 +119,9 @@ async def teacher_number_entered(update: Update, context: ContextTypes.DEFAULT_T
 
 
 async def _load_teacher_schedule(update: Update, context: ContextTypes.DEFAULT_TYPE, teacher: dict) -> int:
+    # Сохраняем для использования в callback «⭐ В избранное»
+    context.user_data["last_teacher"] = teacher
+
     msg = await update.effective_message.reply_text(
         f"⏳ Загружаю расписание *{teacher['name']}*...",
         parse_mode="Markdown"
@@ -134,10 +139,9 @@ async def _load_teacher_schedule(update: Update, context: ContextTypes.DEFAULT_T
         + schedule_text
     )
     await msg.delete()
-    # Кнопки прикрепляются к последнему чанку расписания
     await send_long(
         update.effective_message,
         full_text,
-        reply_markup=_after_teacher_keyboard(teacher["name"], teacher["url"])
+        reply_markup=_after_teacher_keyboard()
     )
     return MAIN_MENU
