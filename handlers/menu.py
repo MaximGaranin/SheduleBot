@@ -1,9 +1,9 @@
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import ContextTypes
-from config import MAIN_MENU
+from config import MAIN_MENU, TIMEZONE
 from keyboards import main_keyboard
 from utils import profile_info
-from database import get_profile, get_history
+from database import get_profile, get_history, is_notify_subscribed
 
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
@@ -20,21 +20,39 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
 async def help_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     query = update.callback_query
     await query.answer()
-    profile = get_profile(update.effective_user.id)
-    hint = (
+    user_id = update.effective_user.id
+    profile    = get_profile(user_id)
+    subscribed = is_notify_subscribed(user_id)
+
+    notify_status = (
+        f"🔔 включены (08:00 и 22:00 по *{TIMEZONE}*)"
+        if subscribed else
+        "🔕 отключены"
+    )
+
+    quick_hint = (
         "\n\n💡 *Быстрый ввод:* напишите номер группы — "
         "бот найдёт её на вашем факультете."
         if profile else ""
     )
+
     await query.edit_message_text(
         "ℹ️ *Помощь*\n\n"
-        "*📅 Моё расписание* — полное расписание вашей группы\n"
-        "*🔆 На сегодня* — только сегодняшние пары\n"
-        "*📚 Расписание группы* — найти любую группу\n"
-        "*👨‍🏫 Преподаватель* — поиск по фамилии / ФИО\n"
-        "*📋 История поиска* — последние 10 запросов\n"
-        "*👤 Настроить профиль* — сохранить факультет и группу"
-        + hint,
+
+        "📊 *Расписание*\n"
+        "• *📅 Моё расписание* — полное расписание вашей группы\n"
+        "• *🔆 На сегодня* — только сегодняшние пары\n"
+        "• *📚 Расписание группы* — найти любую группу на сайте\n"
+        "• *👨\u200d🏫 Преподаватель* — поиск по фамилии или ФИО\n\n"
+
+        "🔔 *Уведомления* — " + notify_status + "\n"
+        "• в *08:00* бот пришлёт расписание на сегодня\n"
+        "• в *22:00* — расписание на завтра\n\n"
+
+        "⭐ *Избранное* — быстрый доступ к сохранённым группам и преподавателям\n"
+        "📋 *История* — последние 10 поисков\n"
+        "👤 *Настроить профиль* — сохранить факультет и группу"
+        + quick_hint,
         reply_markup=InlineKeyboardMarkup([[
             InlineKeyboardButton("◀️ Назад", callback_data="back_main")
         ]]),
@@ -52,7 +70,7 @@ async def history_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
     if not history:
         text = "📋 *История поиска пуста.*"
     else:
-        icons = {"group": "📚", "teacher": "👨‍🏫"}
+        icons = {"group": "📚", "teacher": "👨\u200d🏫"}
         lines = ["📋 *Последние поиски:*\n"]
         for h in history:
             icon = icons.get(h["search_type"], "🔍")
