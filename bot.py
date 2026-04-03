@@ -1,6 +1,7 @@
 import asyncio
 import logging
 import datetime
+import signal
 from zoneinfo import ZoneInfo
 from telegram import Update
 from telegram.ext import (
@@ -138,8 +139,9 @@ def build_conv() -> ConversationHandler:
 
 
 async def _run():
-    """Async entry point — required for Python 3.10+ / 3.14."""
+    """Manual async lifecycle — compatible with Python 3.14."""
     init_db()
+
     app = (
         Application.builder()
         .token(BOT_TOKEN)
@@ -161,8 +163,21 @@ async def _run():
         name="notify_morning",
     )
 
-    logger.info(f"SGU Bot started. Notifications at 08:00 & 22:00 {TIMEZONE}.")
-    await app.run_polling(drop_pending_updates=True)
+    stop_event = asyncio.Event()
+
+    loop = asyncio.get_running_loop()
+    for sig in (signal.SIGINT, signal.SIGTERM):
+        loop.add_signal_handler(sig, stop_event.set)
+
+    logger.info(f"SGU Bot starting. Notifications at 08:00 & 22:00 {TIMEZONE}.")
+
+    async with app:
+        await app.start()
+        await app.updater.start_polling(drop_pending_updates=True)
+        logger.info("SGU Bot is running. Press Ctrl+C to stop.")
+        await stop_event.wait()          # ждём SIGINT / SIGTERM
+        await app.updater.stop()
+        await app.stop()
 
 
 if __name__ == "__main__":
