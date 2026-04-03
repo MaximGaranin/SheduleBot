@@ -1,16 +1,12 @@
-BOT_TOKEN = "8764207637:AAFERtwA5g7LPyo3hfL4h__5eUu7NimTA0M"
-BASE_URL = "https://www.sgu.ru"
+import os
+from dotenv import load_dotenv
 
-# --- Часовой пояс для уведомлений (IANA-имя) ---
-# Примеры: "Europe/Saratov", "Europe/Moscow", "Asia/Yekaterinburg"
-TIMEZONE = "Europe/Saratov"
+load_dotenv()  # читает .env если есть, иначе берёт из окружения
 
-# --- Прокси для доступа к Telegram (нужен если Telegram заблокирован) ---
-# Варианты:
-#   SOCKS5: "socks5://user:pass@host:port" или "socks5://host:port"
-#   HTTP:   "http://user:pass@host:port"  или "http://host:port"
-#   Без прокси: оставьте PROXY = None
-PROXY = None
+BOT_TOKEN = os.environ["BOT_TOKEN"]
+BASE_URL  = os.getenv("BASE_URL", "https://www.sgu.ru")
+TIMEZONE  = os.getenv("TIMEZONE", "Europe/Saratov")
+PROXY     = os.getenv("PROXY") or None   # None если пустая строка
 
 FACULTIES = {
     "knt":   "КНиИТ",
