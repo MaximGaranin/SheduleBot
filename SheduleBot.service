@@ -1,0 +1,22 @@
+[Unit]
+Description=SGU Schedule Telegram Bot
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=root
+WorkingDirectory=/root/SheduleBot
+ExecStart=/root/SheduleBot/venv/bin/python bot.py
+Restart=on-failure
+RestartSec=10
+
+# Если Telegram заблокирован на сервере — разкомментируйте нужное:
+#Environment=HTTPS_PROXY=socks5://127.0.0.1:1080
+#Environment=HTTP_PROXY=socks5://127.0.0.1:1080
+
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target
