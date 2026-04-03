@@ -13,7 +13,7 @@ TIMEZONE = "Europe/Saratov"
 PROXY = None
 
 FACULTIES = {
-    "knt":   "КНиТ",
+    "knt":   "КНиИТ",
     "mmf":   "Механико-математический",
     "ff":    "Физический",
     "hf":    "Химический",
