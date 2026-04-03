@@ -1,4 +1,5 @@
 import logging
+import datetime
 from zoneinfo import ZoneInfo
 from telegram import Update
 from telegram.ext import (
@@ -7,7 +8,7 @@ from telegram.ext import (
 )
 from telegram.request import HTTPXRequest
 from config import (
-    BOT_TOKEN, PROXY,
+    BOT_TOKEN, PROXY, TIMEZONE,
     MAIN_MENU, CHOOSE_FACULTY, CHOOSE_FORM, ENTER_GROUP,
     ENTER_TEACHER, SETUP_FACULTY, SETUP_FORM, SETUP_GROUP,
     TEACHER_SELECT_NUMBER,
@@ -39,7 +40,7 @@ logger = logging.getLogger(__name__)
 
 FIO_FILTER    = filters.TEXT & ~filters.COMMAND & filters.Regex(r'[А-яЁё]{2,}')
 DIGITS_FILTER = filters.TEXT & ~filters.COMMAND & filters.Regex(r'^\d{2,4}$')
-MSK = ZoneInfo("Europe/Moscow")
+LOCAL_TZ = ZoneInfo(TIMEZONE)
 
 
 def make_request(read_timeout: float = 30.0) -> HTTPXRequest:
@@ -146,22 +147,22 @@ def main():
     )
     app.add_handler(build_conv())
 
-    # ── Scheduled notifications (APScheduler via JobQueue) ──
+    # ── Scheduled notifications ──
     jq = app.job_queue
-    # 22:00 MSK — tomorrow's schedule
+    # 22:00 по местному времени — расписание на завтра
     jq.run_daily(
         job_evening,
-        time=__import__('datetime').time(22, 0, 0, tzinfo=MSK),
+        time=datetime.time(22, 0, 0, tzinfo=LOCAL_TZ),
         name="notify_evening",
     )
-    # 08:00 MSK — today's schedule
+    # 08:00 по местному времени — расписание на сегодня
     jq.run_daily(
         job_morning,
-        time=__import__('datetime').time(8, 0, 0, tzinfo=MSK),
+        time=datetime.time(8, 0, 0, tzinfo=LOCAL_TZ),
         name="notify_morning",
     )
 
-    logger.info("SGU Bot started. Notification jobs scheduled (08:00 & 22:00 MSK).")
+    logger.info(f"SGU Bot started. Notifications at 08:00 & 22:00 {TIMEZONE}.")
     app.run_polling(drop_pending_updates=True)
 
 

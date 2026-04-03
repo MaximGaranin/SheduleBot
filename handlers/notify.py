@@ -1,20 +1,20 @@
 """Handlers for daily schedule notification subscription.
 
 Logic:
-  - /notify or button → toggle subscription on/off
+  - button toggle_notify → toggle subscription on/off
   - APScheduler jobs (registered in bot.py):
-      22:00 MSK → send tomorrow's schedule
-      08:00 MSK → send today's schedule
+      22:00 local (TIMEZONE) → send tomorrow's schedule
+      08:00 local (TIMEZONE) → send today's schedule
 """
 import logging
 from datetime import datetime, timedelta
-import pytz
+from zoneinfo import ZoneInfo
 
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import ContextTypes
-from telegram.error import Forbidden, BadRequest
+from telegram.error import Forbidden
 
-from config import BASE_URL, WEEKDAY_TO_DAY, MAIN_MENU, FACULTIES, STUDY_FORMS
+from config import BASE_URL, WEEKDAY_TO_DAY, MAIN_MENU, FACULTIES, STUDY_FORMS, TIMEZONE
 from database import (
     get_profile,
     get_notify_subscribers,
@@ -22,18 +22,14 @@ from database import (
     is_notify_subscribed,
 )
 from fetcher import fetch_page
-from parser import parse_schedule_html, filter_day
-from utils import send_long
+from parser import parse_schedule_html
 
 logger = logging.getLogger(__name__)
-MSK = pytz.timezone("Europe/Moscow")
+TZ = ZoneInfo(TIMEZONE)
 DIVIDER = "─" * 28
 
 
 # ──────────────────────────────────────────────
-# Button handler (toggle subscription)
-# ──────────────────────────────────────────────
-
 async def toggle_notify(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     query   = update.callback_query
     await query.answer()
@@ -42,7 +38,7 @@ async def toggle_notify(update: Update, context: ContextTypes.DEFAULT_TYPE) -> i
 
     if not profile:
         await query.answer(
-            "⚠️ Сначала настройте профиль (группу) через главное меню.",
+            "⚠️ Сначала настройте профиль через главное меню.",
             show_alert=True,
         )
         return MAIN_MENU
@@ -57,6 +53,7 @@ async def toggle_notify(update: Update, context: ContextTypes.DEFAULT_TYPE) -> i
             "Я буду присылать:\n"
             "• В *22:00* — расписание на *завтра*\n"
             "• В *08:00* — расписание на *сегодня*\n\n"
+            f"⏰ Время: *{TIMEZONE}*\n"
             "Чтобы отключить — нажмите кнопку снова."
         )
     else:
@@ -73,11 +70,8 @@ async def toggle_notify(update: Update, context: ContextTypes.DEFAULT_TYPE) -> i
 
 
 # ──────────────────────────────────────────────
-# Scheduled jobs
-# ──────────────────────────────────────────────
-
-async def _send_day_schedule(bot, user_id: int, day_key: str, label: str):
-    """Fetch and send schedule for `day_key` ('today'/'tomorrow') to user."""
+async def _send_day_schedule(bot, user_id: int, day_offset: int, label: str):
+    """Fetch and send schedule for today+day_offset to user."""
     profile = get_profile(user_id)
     if not profile:
         return
@@ -92,18 +86,11 @@ async def _send_day_schedule(bot, user_id: int, day_key: str, label: str):
         logger.warning(f"notify: failed to fetch schedule for user {user_id}")
         return
 
-    now = datetime.now(MSK)
-    if day_key == "today":
-        target_dt = now
-    else:  # tomorrow
-        target_dt = now + timedelta(days=1)
-
+    target_dt = datetime.now(TZ) + timedelta(days=day_offset)
     weekday   = target_dt.weekday()   # 0=Mon … 5=Sat, 6=Sun
     day_short = WEEKDAY_TO_DAY.get(weekday)
-
-    fac_name = FACULTIES.get(faculty, faculty)
-    frm_name = STUDY_FORMS.get(form, form)
-    date_str = target_dt.strftime("%d.%m.%Y")
+    fac_name  = FACULTIES.get(faculty, faculty)
+    date_str  = target_dt.strftime("%d.%m.%Y")
 
     if day_short is None:
         text = (
@@ -113,18 +100,16 @@ async def _send_day_schedule(bot, user_id: int, day_key: str, label: str):
             "🎉 Занятий нет!"
         )
     else:
-        day_schedule = filter_day(parse_schedule_html(html), day_short)
-        if not day_schedule or day_schedule.strip() == "":
-            day_schedule = "Занятий нет (или расписание не найдено)."
+        day_text = parse_schedule_html(html, only_day=day_short)
         text = (
             f"🔔 *{label} — {day_short} {date_str}*\n"
             f"📚 Группа *{grp}* | {fac_name}\n"
             f"{DIVIDER}\n"
-            + day_schedule
+            + day_text
         )
 
     try:
-        await send_long_bot(bot, user_id, text)
+        await _send_long_bot(bot, user_id, text)
     except Forbidden:
         logger.info(f"notify: user {user_id} blocked the bot — unsubscribing")
         set_notify_subscription(user_id, False)
@@ -132,8 +117,7 @@ async def _send_day_schedule(bot, user_id: int, day_key: str, label: str):
         logger.error(f"notify: error sending to {user_id}: {e}")
 
 
-async def send_long_bot(bot, chat_id: int, text: str):
-    """Split long text and send via bot object (not update)."""
+async def _send_long_bot(bot, chat_id: int, text: str):
     MAX = 4000
     parts = [text[i:i+MAX] for i in range(0, len(text), MAX)]
     for part in parts:
@@ -146,16 +130,16 @@ async def send_long_bot(bot, chat_id: int, text: str):
 
 
 async def job_evening(context: ContextTypes.DEFAULT_TYPE):
-    """22:00 MSK — send tomorrow's schedule."""
+    """22:00 local — send tomorrow's schedule."""
     subscribers = get_notify_subscribers()
     logger.info(f"notify evening job: {len(subscribers)} subscribers")
     for user_id in subscribers:
-        await _send_day_schedule(context.bot, user_id, "tomorrow", "Расписание на завтра")
+        await _send_day_schedule(context.bot, user_id, day_offset=1, label="Расписание на завтра")
 
 
 async def job_morning(context: ContextTypes.DEFAULT_TYPE):
-    """08:00 MSK — send today's schedule."""
+    """08:00 local — send today's schedule."""
     subscribers = get_notify_subscribers()
     logger.info(f"notify morning job: {len(subscribers)} subscribers")
     for user_id in subscribers:
-        await _send_day_schedule(context.bot, user_id, "today", "Расписание на сегодня")
+        await _send_day_schedule(context.bot, user_id, day_offset=0, label="Расписание на сегодня")
