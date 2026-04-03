@@ -83,7 +83,9 @@ def build_conv() -> ConversationHandler:
     return ConversationHandler(
         entry_points=[
             CommandHandler("start", start),
-            MessageHandler(DIGITS_FILTER, quick_group_input),
+            # DIGITS_FILTER убран из entry_points — цифры внутри диалога
+            # должны обрабатываться через states, иначе выбор преподавателя
+            # по номеру перехватывается quick_group_input
             MessageHandler(FIO_FILTER, teacher_query_entered),
         ],
         states={
@@ -111,8 +113,6 @@ def build_conv() -> ConversationHandler:
                 MessageHandler(filters.TEXT & ~filters.COMMAND, teacher_query_entered),
                 CallbackQueryHandler(start, pattern=r"^back_main$"),
             ],
-            # В этом состоянии DIGITS_FILTER должен обрабатываться первым,
-            # чтобы цифра не уходила в quick_group_input
             TEACHER_SELECT_NUMBER: [
                 MessageHandler(DIGITS_FILTER, teacher_number_entered),
                 MessageHandler(filters.TEXT & ~filters.COMMAND, teacher_number_entered),
