@@ -159,7 +159,7 @@ async def _run():
     )
     jq.run_daily(
         job_morning,
-        time=datetime.time(8, 0, 0, tzinfo=LOCAL_TZ),
+        time=datetime.time(7, 30, 0, tzinfo=LOCAL_TZ),
         name="notify_morning",
     )
 
@@ -169,13 +169,13 @@ async def _run():
     for sig in (signal.SIGINT, signal.SIGTERM):
         loop.add_signal_handler(sig, stop_event.set)
 
-    logger.info(f"SGU Bot starting. Notifications at 08:00 & 22:00 {TIMEZONE}.")
+    logger.info(f"SGU Bot starting. Notifications at 07:30 & 22:00 {TIMEZONE}.")
 
     async with app:
         await app.start()
         await app.updater.start_polling(drop_pending_updates=True)
         logger.info("SGU Bot is running. Press Ctrl+C to stop.")
-        await stop_event.wait()          # ждём SIGINT / SIGTERM
+        await stop_event.wait()
         await app.updater.stop()
         await app.stop()
 

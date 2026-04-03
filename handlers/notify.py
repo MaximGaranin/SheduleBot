@@ -4,7 +4,7 @@ Logic:
   - button toggle_notify → toggle subscription on/off
   - APScheduler jobs (registered in bot.py):
       22:00 local (TIMEZONE) → send tomorrow's schedule
-      08:00 local (TIMEZONE) → send today's schedule
+      07:30 local (TIMEZONE) → send today's schedule
 """
 import logging
 from datetime import datetime, timedelta
@@ -52,7 +52,7 @@ async def toggle_notify(update: Update, context: ContextTypes.DEFAULT_TYPE) -> i
             "🔔 *Уведомления включены!*\n\n"
             "Я буду присылать:\n"
             "• В *22:00* — расписание на *завтра*\n"
-            "• В *08:00* — расписание на *сегодня*\n\n"
+            "• В *07:30* — расписание на *сегодня*\n\n"
             f"⏰ Время: *{TIMEZONE}*\n"
             "Чтобы отключить — нажмите кнопку снова."
         )
@@ -138,7 +138,7 @@ async def job_evening(context: ContextTypes.DEFAULT_TYPE):
 
 
 async def job_morning(context: ContextTypes.DEFAULT_TYPE):
-    """08:00 local — send today's schedule."""
+    """07:30 local — send today's schedule."""
     subscribers = get_notify_subscribers()
     logger.info(f"notify morning job: {len(subscribers)} subscribers")
     for user_id in subscribers:

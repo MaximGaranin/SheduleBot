@@ -25,7 +25,7 @@ async def help_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> in
     subscribed = is_notify_subscribed(user_id)
 
     notify_status = (
-        f"🔔 включены (08:00 и 22:00 по *{TIMEZONE}*)"
+        f"🔔 включены (07:30 и 22:00 по *{TIMEZONE}*)"
         if subscribed else
         "🔕 отключены"
     )
@@ -46,7 +46,7 @@ async def help_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> in
         "• *👨\u200d🏫 Преподаватель* — поиск по фамилии или ФИО\n\n"
 
         "🔔 *Уведомления* — " + notify_status + "\n"
-        "• в *08:00* бот пришлёт расписание на сегодня\n"
+        "• в *07:30* бот пришлёт расписание на сегодня\n"
         "• в *22:00* — расписание на завтра\n\n"
 
         "⭐ *Избранное* — быстрый доступ к сохранённым группам и преподавателям\n"
