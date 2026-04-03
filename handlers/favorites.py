@@ -91,7 +91,7 @@ async def _open_group_fav(update: Update, fav: dict) -> int:
 
     text = (
         f"📅 *Расписание группы {grp}*\n"
-        f"🏛️ {fac_name}\n📋 {frm_name}\n"
+        f"🏗️ {fac_name}\n📋 {frm_name}\n"
         f"🔗 [{url}]({url})\n"
         f"{DIVIDER}\n"
         + parse_schedule_html(html)
@@ -179,12 +179,18 @@ async def add_group_to_fav_handler(update: Update, context: ContextTypes.DEFAULT
 
 
 async def add_teacher_to_fav_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    query        = update.callback_query
+    """callback_data == 'fav_add_teacher'.
+    Данные учителя берём из context.user_data['last_teacher'],
+    потому что callback_data ограничен 64 байтами."""
+    query   = update.callback_query
     await query.answer()
-    parts        = query.data.split("|", 4)
-    teacher_name = parts[3]
-    teacher_url  = parts[4]
+    teacher = context.user_data.get("last_teacher")
+    if not teacher:
+        await query.answer("⚠️ Нет данных. Снова найдите преподавателя.", show_alert=True)
+        return MAIN_MENU
     user_id      = update.effective_user.id
+    teacher_name = teacher["name"]
+    teacher_url  = teacher["url"]
     label        = teacher_name[:40]
     ok = add_favorite_teacher(user_id, label, teacher_name, teacher_url)
     if ok:
