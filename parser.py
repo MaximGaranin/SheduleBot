@@ -8,7 +8,18 @@ def clean(text: str) -> str:
 
 
 def _parse_horizontal(rows, header_row_idx) -> dict:
-    """Горизонтальная таблица: дни = столбцы (расписание группы)."""
+    """Горизонтальная таблица: дни = столбцы.
+
+    Структура страницы преподавателя:
+      стр 0: |Понедельник|Вторник|...|Суббота|  <- 6 кол., БЕЗ кол. времени
+      стр 1: |Пн|Вт|...|Сб|                        <- дубль заголовка
+      стр 2+: |08:20 09:50|занятие Пн|...| <- данные
+
+    Структура страницы группы:
+      стр 0: |Время|Пн|Вт|...|Сб|             <- в первом столбце 'Время'
+      стр 1+: |08:20|занятие Пн|...|             <- данные
+    """
+    # Определяем day_col: c_idx -> short_day_name
     day_col = {}
     for row in rows[:header_row_idx + 1]:
         cells = row.find_all(["td", "th"])
@@ -18,14 +29,28 @@ def _parse_horizontal(rows, header_row_idx) -> dict:
             if short:
                 day_col[c_idx] = short
 
+    if not day_col:
+        return {day: [] for day in DAYS_ORDER}
+
+    min_day_col = min(day_col.keys())
+
+    # Если дни начинаются с колонки 0 — значит колонки времени нет
+    # в заголовке (страница преподавателя), но в строках данных
+    # первый столбец — время. Нужно сдвинуть day_col на +1.
+    if min_day_col == 0:
+        day_col = {k + 1: v for k, v in day_col.items()}
+
     schedule = {day: [] for day in DAYS_ORDER}
     data_start = header_row_idx + 1
-    # Пропустить возможную вторую строку заголовка
-    if data_start < len(rows):
-        next_cells = rows[data_start].find_all(["td", "th"])
-        next_texts = [clean(c.get_text()) for c in next_cells]
-        if any(t in DAY_NAMES for t in next_texts):
+
+    # Пропустить дополнительные строки-заголовки (напр., стр. с "Пн|Вт|...")
+    while data_start < len(rows):
+        cells = rows[data_start].find_all(["td", "th"])
+        texts = [clean(c.get_text()) for c in cells]
+        if any(DAY_NAMES.get(t) for t in texts):
             data_start += 1
+        else:
+            break
 
     for row in rows[data_start:]:
         cells = row.find_all(["td", "th"])
@@ -43,14 +68,7 @@ def _parse_horizontal(rows, header_row_idx) -> dict:
 
 
 def _parse_vertical(rows) -> dict:
-    """Вертикальная таблица: дни = строки (расписание преподавателя).
-
-    Структура каждой строки-блока:
-      [0] номер дня / название дня
-      [1] время
-      [2] содержимое занятия
-    Или строка-заголовок дня, за которой идут строки времён.
-    """
+    """Вертикальная таблица: дни = строки."""
     schedule = {day: [] for day in DAYS_ORDER}
     current_day = None
 
@@ -60,23 +78,20 @@ def _parse_vertical(rows) -> dict:
             continue
         texts = [clean(c.get_text(" ")) for c in cells]
 
-        # Строка-заголовок дня: одна ячейка = название дня
         if len(texts) == 1:
             short = DAY_NAMES.get(texts[0])
             if short:
                 current_day = short
             continue
 
-        # Проверяем, не начинается ли первая ячейка с названия дня
         first_short = DAY_NAMES.get(texts[0])
         if first_short:
             current_day = first_short
-            texts = texts[1:]  # остаток строки — время и занятие
+            texts = texts[1:]
 
         if current_day is None:
             continue
 
-        # Ищем время в любой из ячеек
         time_val = None
         lesson_parts = []
         for t in texts:
@@ -98,7 +113,7 @@ def _format_schedule(schedule: dict, only_day: str = None) -> str:
         entries = schedule.get(day, [])
         if not entries:
             if only_day:
-                return f"📭 В *{day}* занятий нет."
+                return f"💭 В *{day}* занятий нет."
             continue
         lines.append(f"\n{DAY_EMOJI.get(day, '📅')} *{day}*")
         for time_val, lesson in entries:
@@ -130,7 +145,7 @@ def parse_schedule_html(html: str, only_day: str = None) -> str:
     if len(rows) < 2:
         return "⚠️ Таблица пустая."
 
-    # Определяем тип таблицы: горизонтальная или вертикальная
+    # Определяем тип таблицы
     header_row_idx = None
     day_col = {}
     for r_idx, row in enumerate(rows[:3]):
@@ -145,16 +160,14 @@ def parse_schedule_html(html: str, only_day: str = None) -> str:
             break
 
     if day_col:
-        # Горизонтальная: дни в первых строках как столбцы
         schedule = _parse_horizontal(rows, header_row_idx)
     else:
-        # Вертикальная: дни как строки (преподаватели)
         schedule = _parse_vertical(rows)
 
     return _format_schedule(schedule, only_day)
 
 
-# ─── Поиск преподавателей ──────────────────────────────────────────────────────
+# ─── Поиск преподавателей ────────────────────────────────────────────────────────
 
 def _score_teacher(name_lower: str, words: list[str]) -> int:
     tokens = name_lower.split()
