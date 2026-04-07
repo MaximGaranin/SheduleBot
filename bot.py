@@ -13,7 +13,7 @@ from config import (
     BOT_TOKEN, PROXY, TIMEZONE,
     MAIN_MENU, CHOOSE_FACULTY, CHOOSE_FORM, ENTER_GROUP,
     ENTER_TEACHER, SETUP_FACULTY, SETUP_FORM, SETUP_GROUP,
-    TEACHER_SELECT_NUMBER,
+    TEACHER_SELECT_NUMBER, ENTER_SESSION_GROUP,
 )
 from database import init_db
 from handlers.menu import start, help_handler, history_handler
@@ -87,10 +87,6 @@ async def main_menu_router(update: Update, context):
     if d.startswith("fav_add_group"):   return await add_group_to_fav_handler(update, context)
     if d.startswith("fav_add_teacher"): return await add_teacher_to_fav_handler(update, context)
     return MAIN_MENU
-
-
-# Состояние для ввода группы при поиске сессии
-ENTER_SESSION_GROUP = 10
 
 
 def build_conv() -> ConversationHandler:
