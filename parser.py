@@ -152,22 +152,40 @@ def parse_schedule_html(html: str, only_day: str = None) -> str:
 
 # ─── Парсинг расписания сессии ───────────────────────────────────────────────
 
-_SESSION_TYPES = {
-    "экзамен":                  "📝",
-    "зачет":                    "✅",
-    "зачёт":                    "✅",
-    "консультация":             "💬",
-    "дифференцированный зачет": "📊",
-    "диф. зачет":               "📊",
-    "диф.зачет":                "📊",
-    "курсовая":                 "📐",
-}
+# Типы событий сессии — указаны в поле "Дисциплина" прямо в конце строки
+# Например: "Микроэкономика Экзамен"
+_SESSION_TYPES = [
+    ("экзамен",                   "📝"),
+    ("дифференцированный зачет",  "📊"),
+    ("диф. зачет",              "📊"),
+    ("консультация",            "💬"),
+    ("курсовая",               "📐"),
+    ("зачет",                  "✅"),
+    ("зачёт",                  "✅"),
+]
+
+# Регексп для извлечения типа события из конца строки дисциплины
+# "Микроэкономика Экзамен" → subject="Микроэкономика", kind="Экзамен"
+_TYPE_RE = re.compile(
+    r'\s+((Экзамен|Дифференцированный\s+зач[её]т|Консультация|Зач[её]т|Курсовая))$',
+    re.IGNORECASE,
+)
 
 
-def _event_emoji(text: str) -> str:
-    low = text.lower()
-    for key, emoji in _SESSION_TYPES.items():
-        if key in low:
+def _split_subject_kind(raw: str):
+    """"Микроэкономика Экзамен" → ("Микроэкономика", "Экзамен")"""
+    m = _TYPE_RE.search(raw)
+    if m:
+        kind = m.group(1).strip()
+        subject = raw[:m.start()].strip()
+        return subject, kind
+    return raw.strip(), ""
+
+
+def _event_emoji(kind: str, subject: str = "") -> str:
+    text = (kind + " " + subject).lower()
+    for key, emoji in _SESSION_TYPES:
+        if key in text:
             return emoji
     return "📌"
 
@@ -175,28 +193,24 @@ def _event_emoji(text: str) -> str:
 def parse_session_html(html: str) -> str:
     """Парсит страницу /schedule/{fac}/{form}/{grp}/session СГУ.
 
-    Формат таблицы: Дата | Дисциплина | Преподаватель | Место проведения
-    Дата и время могут быть в одной ячейке в форматах:
-      - '2026-01-13 13:50:00'
-      - '13.01.2026 13:50'
-      - '13 января 2026 13:50'
+    Реальный формат таблицы:
+      Дата               | Дисциплина                       | Преподаватель | Место
+      2026-01-13 13:50:00 | Микроэкономика Экзамен | Иванов И.И. | 12-518
     """
     soup = BeautifulSoup(html, "html.parser")
 
-    # Ищем таблицу с нужными столбцами
+    # Ищем таблицу с нужными столбцами (Дисциплина + Преподаватель)
     target_table = None
     for table in soup.find_all("table"):
         text = table.get_text(" ", strip=True)
-        if ("Дисциплина" in text or "дисциплин" in text.lower()) and \
-           ("Преподаватель" in text or "препод" in text.lower() or "Дата" in text):
+        if "Дисциплина" in text and "Преподаватель" in text:
             target_table = table
             break
 
-    # Фолбэк: любая таблица с датами в строках
+    # Фолбэк: любая таблица с ISO-датами
     if not target_table:
         for table in soup.find_all("table"):
-            text = table.get_text()
-            if re.search(r'\d{2}\.\d{2}\.\d{4}|\d{4}-\d{2}-\d{2}', text):
+            if re.search(r'\d{4}-\d{2}-\d{2}', table.get_text()):
                 target_table = table
                 break
 
@@ -212,7 +226,7 @@ def parse_session_html(html: str) -> str:
     if len(rows) < 2:
         return "📭 Расписание сессии пока не опубликовано."
 
-    # Определяем заголовки
+    # Определяем индексы колонок по заголовке
     header_cells = rows[0].find_all(["td", "th"])
     headers = [clean(c.get_text()).lower() for c in header_cells]
 
@@ -224,82 +238,68 @@ def parse_session_html(html: str) -> str:
         return None
 
     col_date    = _col("дата", "число")
-    col_time    = _col("время", "час")
-    col_subject = _col("дисциплин", "предмет", "название")
-    col_type    = _col("вид", "тип", "форма")
+    col_subject = _col("дисциплин", "предмет")
     col_teacher = _col("преподаватель", "препод", "фио")
-    col_room    = _col("аудитория", "кабинет", "ауд", "место")
+    col_room    = _col("аудитория", "место", "кабинет", "ауд")
 
-    # Если в дате уже есть время (нет отдельной колонки времени),
-    # попробуем определить это после первой строки данных
-    date_has_time = False
+    # Если заголовки не найдены, по количеству столбцов: Дата=0, Дисц=1, Преп=2, Место=3
+    if col_date is None:    col_date    = 0
+    if col_subject is None: col_subject = 1
+    if col_teacher is None: col_teacher = 2
+    if col_room is None:    col_room    = 3
 
     entries = []
     for row in rows[1:]:
         cells = row.find_all(["td", "th"])
-        if not cells:
+        if len(cells) < 2:
             continue
         texts = [clean(c.get_text(" ")) for c in cells]
 
-        # Пропускаем строки-заголовки внутри таблицы
-        if all(t.lower() in headers or not t for t in texts):
-            continue
-
         def g(idx):
-            if idx is not None and idx < len(texts):
+            if idx < len(texts):
                 v = texts[idx]
-                return v if v not in ("-", "–", "—") else ""
+                return v if v not in ("-", "–", "—", "") else ""
             return ""
 
-        date_raw = g(col_date)
-        time_val = g(col_time)
-        subject  = g(col_subject)
-        kind     = g(col_type)
-        teacher  = g(col_teacher)
-        room     = g(col_room)
+        date_raw     = g(col_date)
+        subject_raw  = g(col_subject)
+        teacher      = g(col_teacher)
+        room         = g(col_room)
 
-        # Если нет отдельной колонки даты — ищем дату по содержимому
-        if col_date is None:
-            for t in texts:
-                if re.search(r'\d{2}\.\d{2}\.\d{4}|\d{4}-\d{2}-\d{2}|\d{2}\.\d{2}', t):
-                    date_raw = t
-                    break
-
-        # Если нет отдельной колонки времени — извлекаем время из даты
-        if col_time is None and date_raw:
-            m = re.search(r'(\d{1,2}:\d{2})(?::\d{2})?', date_raw)
-            if m:
-                time_val = m.group(1)
-                date_has_time = True
-
-        # Форматируем дату
-        date_str = date_raw
-        # ISO формат: 2026-01-13 13:50:00 → 13.01.2026
-        m_iso = re.match(r'(\d{4})-(\d{2})-(\d{2})', date_raw)
-        if m_iso:
-            date_str = f"{m_iso.group(3)}.{m_iso.group(2)}.{m_iso.group(1)}"
-            if not time_val:
-                mt = re.search(r'(\d{2}:\d{2})(?::\d{2})?', date_raw)
-                if mt:
-                    time_val = mt.group(1)
-
-        # Если предмет не определён — берём самую длинную ячейку (кроме даты)
-        if not subject and len(texts) >= 2:
-            candidates = [t for i, t in enumerate(texts) if i != col_date]
-            subject = max(candidates, key=len, default="")
-
-        # Пропускаем пустые строки
-        if not date_str and not subject:
+        # Пропускаем строку-заголовок
+        if not date_raw and not subject_raw:
+            continue
+        # Строка совпадает с заголовкой
+        if date_raw.lower() in headers or subject_raw.lower() in headers:
             continue
 
-        emoji = _event_emoji(kind or subject)
-        line  = f"{emoji} *{date_str}*"
-        if time_val:
-            line += f" `{time_val}`"
-        if kind and subject and kind.lower() not in subject.lower():
+        # Форматируем дату и время
+        # Формат СГУ: '2026-01-13 13:50:00'
+        date_str = date_raw
+        time_str = ""
+        m_iso = re.match(r'(\d{4})-(\d{2})-(\d{2})(?:\s+(\d{2}:\d{2}))?', date_raw)
+        if m_iso:
+            date_str = f"{m_iso.group(3)}.{m_iso.group(2)}.{m_iso.group(1)}"
+            time_str = m_iso.group(4) or ""
+        else:
+            # Другие форматы: '13.01.2026 13:50' или просто 'дд.мм'
+            m_time = re.search(r'(\d{1,2}:\d{2})', date_raw)
+            if m_time:
+                time_str = m_time.group(1)
+                date_str = date_raw[:m_time.start()].strip()
+
+        # Разделяем дисциплину и тип события
+        # Пример: "Микроэкономика Экзамен" → subject="Микроэкономика", kind="Экзамен"
+        subject, kind = _split_subject_kind(subject_raw)
+
+        emoji = _event_emoji(kind, subject)
+
+        line = f"{emoji} *{date_str}*"
+        if time_str:
+            line += f" `{time_str}`"
+        if kind:
             line += f" — _{kind}_"
-        if subject:
-            line += f"\n    📖 {subject}"
+        line += f"\n    📖 {subject}"
         if teacher:
             line += f"\n    👤 {teacher}"
         if room:
