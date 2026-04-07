@@ -150,6 +150,15 @@ def parse_schedule_html(html: str, only_day: str = None) -> str:
 
 # ─── Парсинг расписания сессии ───────────────────────────────────────────────
 
+# Русские названия месяцев для формата «13 апреля 2026 г. 10:00»
+_RU_MONTHS = {
+    "января": "01", "февраля": "02", "марта": "03",
+    "апреля": "04", "мая": "05",     "июня": "06",
+    "июля": "07",  "августа": "08", "сентября": "09",
+    "октября": "10", "ноября": "11",  "декабря": "12",
+}
+
+# Типы событий сессии
 _SESSION_TYPES = [
     ("экзамен",                   "📝"),
     ("дифференцированный зачет",  "📊"),
@@ -158,21 +167,10 @@ _SESSION_TYPES = [
     ("курсовая",               "📐"),
     ("зачет",                  "✅"),
     ("зачёт",                  "✅"),
+    ("лабораторная",           "🔬"),
+    ("практика",               "📝"),
+    ("лекция",                "📖"),
 ]
-
-_TYPE_RE = re.compile(
-    r'\s+((Экзамен|Дифференцированный\s+зач[её]т|Консультация|Зач[её]т|Курсовая))$',
-    re.IGNORECASE,
-)
-
-
-def _split_subject_kind(raw: str):
-    m = _TYPE_RE.search(raw)
-    if m:
-        kind = m.group(1).strip()
-        subject = raw[:m.start()].strip()
-        return subject, kind
-    return raw.strip(), ""
 
 
 def _event_emoji(kind: str, subject: str = "") -> str:
@@ -183,11 +181,91 @@ def _event_emoji(kind: str, subject: str = "") -> str:
     return "📌"
 
 
-def _is_session_empty(soup: BeautifulSoup) -> bool:
-    """Проверяет, что страница сессии пустая (нет дат сессии)."""
-    page_text = soup.get_text(" ", strip=True).lower()
+def _parse_ru_date(raw: str):
+    """Парсит дату и время в любом из форматов:
+      - '13 апреля 2026 г. 10:00'
+      - '2026-04-13 10:00:00'
+      - '13.04.2026 10:00'
+    Возвращает (date_str, time_str)
+    """
+    raw = raw.strip()
 
-    # Тексты которые СГУ показывает когда сессия не заполнена
+    # ISO: 2026-04-13 10:00:00
+    m = re.match(r'(\d{4})-(\d{2})-(\d{2})(?:\s+(\d{2}:\d{2}))?', raw)
+    if m:
+        date_str = f"{m.group(3)}.{m.group(2)}.{m.group(1)}"
+        time_str = m.group(4) or ""
+        return date_str, time_str
+
+    # Русский: 13 апреля 2026 г. 10:00
+    m = re.match(
+        r'(\d{1,2})\s+([\u0430-я]+)\s+(\d{4})(?:\s*г\.?)?(?:\s+(\d{1,2}:\d{2}))?',
+        raw, re.IGNORECASE
+    )
+    if m:
+        day   = m.group(1).zfill(2)
+        month = _RU_MONTHS.get(m.group(2).lower(), "??")
+        year  = m.group(3)
+        time_str = m.group(4) or ""
+        date_str = f"{day}.{month}.{year}"
+        return date_str, time_str
+
+    # DD.MM.YYYY HH:MM
+    m = re.match(r'(\d{2}\.\d{2}\.\d{4})(?:\s+(\d{1,2}:\d{2}))?', raw)
+    if m:
+        return m.group(1), m.group(2) or ""
+
+    # Если ничего не подошло — извлечем время
+    mt = re.search(r'(\d{1,2}:\d{2})', raw)
+    time_str = mt.group(1) if mt else ""
+    date_str = raw[:mt.start()].strip() if mt else raw
+    return date_str, time_str
+
+
+# Типы событий в начале строки (заочники)
+# Пример: "ЭкзаменСтруктуры данных" → kind="Экзамен", subject="Структуры данных"
+_TYPE_PREFIX_RE = re.compile(
+    r'^(Экзамен|Дифференцированный\s+зач[её]т|Консультация|Зач[её]т|Курсовая|Лабораторная|Практика|Лекция)',
+    re.IGNORECASE,
+)
+
+# Тип в конце строки (дневники)
+_TYPE_SUFFIX_RE = re.compile(
+    r'\s+(Экзамен|Дифференцированный\s+зач[её]т|Консультация|Зач[её]т|Курсовая)$',
+    re.IGNORECASE,
+)
+
+
+def _split_subject_kind(raw: str):
+    """Разделяет тип события и название дисциплины.
+
+    Поддерживает два формата:
+      1. Заочники: тип в НАЧАЛЕ без пробела
+         "ЭкзаменСтруктуры данных" → ("Структуры данных", "Экзамен")
+      2. Дневники: тип в КОНЦЕ через пробел
+         "Микроэкономика Экзамен" → ("Микроэкономика", "Экзамен")
+    """
+    raw = raw.strip()
+
+    # Сначала пробуем формат заочников: тип в начале без пробела
+    m = _TYPE_PREFIX_RE.match(raw)
+    if m:
+        kind    = m.group(1).strip()
+        subject = raw[m.end():].strip()
+        return subject, kind
+
+    # Затем формат дневников: тип в конце через пробел
+    m = _TYPE_SUFFIX_RE.search(raw)
+    if m:
+        kind    = m.group(1).strip()
+        subject = raw[:m.start()].strip()
+        return subject, kind
+
+    return raw, ""
+
+
+def _is_session_empty(soup: BeautifulSoup) -> bool:
+    page_text = soup.get_text(" ", strip=True).lower()
     empty_markers = [
         "расписание не сформировано",
         "расписание отсутствует",
@@ -201,47 +279,53 @@ def _is_session_empty(soup: BeautifulSoup) -> bool:
         if marker in page_text:
             return True
 
-    # Если на странице нет ни одной даты в формате даты
-    if not re.search(r'\d{4}-\d{2}-\d{2}|\d{2}\.\d{2}\.\d{4}', page_text):
-        # Дополнительная проверка: если таблиц с данными вообще нет
+    # Нет дат — сессия пуста
+    has_date = bool(
+        re.search(r'\d{4}-\d{2}-\d{2}|\d{2}\.\d{2}\.\d{4}', page_text) or
+        any(m in page_text for m in _RU_MONTHS)
+    )
+    if not has_date:
         tables = soup.find_all("table")
-        has_data_table = False
-        for t in tables:
-            rows = t.find_all("tr")
-            if len(rows) >= 2:
-                has_data_table = True
-                break
-        if not has_data_table:
+        has_data = any(len(t.find_all("tr")) >= 2 for t in tables)
+        if not has_data:
             return True
 
     return False
 
 
 def parse_session_html(html: str) -> str:
-    """Парсит страницу /schedule/{fac}/{form}/{grp}/session СГУ.
+    """Парсит страницу /schedule/{fac}/{form}/{grp}/session.
 
-    Реальный формат таблицы:
-      Дата               | Дисциплина                       | Преподаватель | Место
+    Поддерживает два формата:
+
+    Дневники (колонка «Дисциплина», тип в конце):
       2026-01-13 13:50:00 | Микроэкономика Экзамен | Иванов И.И. | 12-518
+
+    Заочники (колонка «Отчётность / Дисциплина», тип в начале):
+      13 апреля 2026 г. 10:00 | ЭкзаменСтруктуры данных | Батраева И.А. | 12 корпус, 314 комната
     """
     soup = BeautifulSoup(html, "html.parser")
 
-    # Сразу проверяем — пустая ли страница
     if _is_session_empty(soup):
         return "📭 Расписание сессии ещё не заполнено."
 
-    # Ищем таблицу с Дисциплина + Преподаватель
+    # Ищем таблицу:
+    # Дневники: Дисциплина + Преподаватель
+    # Заочники: Отчётность / Дисциплина + Преподаватель
     target_table = None
     for table in soup.find_all("table"):
         text = table.get_text(" ", strip=True)
-        if "Дисциплина" in text and "Преподаватель" in text:
+        if ("дисциплин" in text.lower()) and \
+           ("преподаватель" in text.lower() or "место" in text.lower()):
             target_table = table
             break
 
-    # Фолбэк: любая таблица с ISO-датами
+    # Фолбэк: любая таблица с ISO или русской датой
     if not target_table:
         for table in soup.find_all("table"):
-            if re.search(r'\d{4}-\d{2}-\d{2}', table.get_text()):
+            t = table.get_text()
+            if re.search(r'\d{4}-\d{2}-\d{2}', t) or \
+               any(m in t.lower() for m in _RU_MONTHS):
                 target_table = table
                 break
 
@@ -263,10 +347,16 @@ def parse_session_html(html: str) -> str:
                     return i
         return None
 
-    col_date    = _col("дата", "число") or 0
-    col_subject = _col("дисциплин", "предмет") or 1
-    col_teacher = _col("преподаватель", "препод", "фио") or 2
-    col_room    = _col("аудитория", "место", "кабинет", "ауд") or 3
+    col_date    = _col("дата", "число") 
+    col_subject = _col("дисциплин", "отчётность", "предмет")
+    col_teacher = _col("преподаватель", "препод", "фио")
+    col_room    = _col("место", "аудитория", "кабинет", "ауд")
+
+    # Фаллбэк по позиции
+    if col_date    is None: col_date    = 0
+    if col_subject is None: col_subject = 1
+    if col_teacher is None: col_teacher = 2
+    if col_room    is None: col_room    = 3
 
     entries = []
     for row in rows[1:]:
@@ -288,22 +378,11 @@ def parse_session_html(html: str) -> str:
 
         if not date_raw and not subject_raw:
             continue
+        # Пропускаем строку заголовки
         if date_raw.lower() in headers or subject_raw.lower() in headers:
             continue
 
-        # Форматируем дату и время
-        date_str = date_raw
-        time_str = ""
-        m_iso = re.match(r'(\d{4})-(\d{2})-(\d{2})(?:\s+(\d{2}:\d{2}))?', date_raw)
-        if m_iso:
-            date_str = f"{m_iso.group(3)}.{m_iso.group(2)}.{m_iso.group(1)}"
-            time_str = m_iso.group(4) or ""
-        else:
-            m_time = re.search(r'(\d{1,2}:\d{2})', date_raw)
-            if m_time:
-                time_str = m_time.group(1)
-                date_str = date_raw[:m_time.start()].strip()
-
+        date_str, time_str = _parse_ru_date(date_raw)
         subject, kind = _split_subject_kind(subject_raw)
         emoji = _event_emoji(kind, subject)
 
