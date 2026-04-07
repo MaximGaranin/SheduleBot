@@ -33,6 +33,10 @@ from handlers.favorites import (
     add_group_to_fav_handler, add_teacher_to_fav_handler,
 )
 from handlers.notify import toggle_notify, job_evening, job_morning
+from handlers.session import (
+    show_my_session, session_choose_faculty,
+    session_faculty_chosen, session_form_chosen, session_group_entered,
+)
 
 logging.basicConfig(
     format="%(asctime)s %(name)s %(levelname)s %(message)s",
@@ -42,6 +46,7 @@ logger = logging.getLogger(__name__)
 
 FIO_FILTER    = filters.TEXT & ~filters.COMMAND & filters.Regex(r'[А-яЁё]{2,}')
 DIGITS_FILTER = filters.TEXT & ~filters.COMMAND & filters.Regex(r'^\d{2,4}$')
+SESSION_GROUP_FILTER = filters.TEXT & ~filters.COMMAND
 LOCAL_TZ = ZoneInfo(TIMEZONE)
 
 
@@ -63,27 +68,39 @@ async def main_menu_router(update: Update, context):
     await query.answer()
     d = query.data
 
-    if d == "group_schedule":     return await show_faculties(update, context)
-    if d == "teacher_schedule":   return await ask_teacher_name(update, context)
-    if d == "setup_profile":      return await setup_profile_start(update, context)
-    if d == "my_schedule":        return await show_my_schedule(update, context)
-    if d == "today_schedule":     return await show_my_schedule(update, context, only_day="today")
-    if d == "toggle_notify":      return await toggle_notify(update, context)
-    if d == "back_main":          return await start(update, context)
-    if d == "help":               return await help_handler(update, context)
-    if d == "history":            return await history_handler(update, context)
-    if d == "favorites":          return await show_favorites(update, context)
-    if d.startswith("fav_open_"): return await open_favorite(update, context)
-    if d.startswith("fav_del_"):  return await delete_favorite_handler(update, context)
+    if d == "group_schedule":      return await show_faculties(update, context)
+    if d == "teacher_schedule":    return await ask_teacher_name(update, context)
+    if d == "setup_profile":       return await setup_profile_start(update, context)
+    if d == "my_schedule":         return await show_my_schedule(update, context)
+    if d == "today_schedule":      return await show_my_schedule(update, context, only_day="today")
+    if d == "toggle_notify":       return await toggle_notify(update, context)
+    if d == "back_main":           return await start(update, context)
+    if d == "help":                return await help_handler(update, context)
+    if d == "history":             return await history_handler(update, context)
+    if d == "favorites":           return await show_favorites(update, context)
+    if d == "my_session":          return await show_my_session(update, context)
+    if d == "session_search":      return await session_choose_faculty(update, context)
+    if d.startswith("session_fac_"):  return await session_faculty_chosen(update, context)
+    if d.startswith("session_form_"): return await session_form_chosen(update, context)
+    if d.startswith("fav_open_"):  return await open_favorite(update, context)
+    if d.startswith("fav_del_"):   return await delete_favorite_handler(update, context)
     if d.startswith("fav_add_group"):   return await add_group_to_fav_handler(update, context)
     if d.startswith("fav_add_teacher"): return await add_teacher_to_fav_handler(update, context)
     return MAIN_MENU
+
+
+# Состояние для ввода группы при поиске сессии
+ENTER_SESSION_GROUP = 10
 
 
 def build_conv() -> ConversationHandler:
     fav_cb = CallbackQueryHandler(
         main_menu_router,
         pattern=r"^(favorites|fav_open_|fav_del_|fav_add_group|fav_add_teacher)"
+    )
+    session_cb = CallbackQueryHandler(
+        main_menu_router,
+        pattern=r"^(my_session|session_search|session_fac_|session_form_)"
     )
     return ConversationHandler(
         entry_points=[
@@ -93,6 +110,7 @@ def build_conv() -> ConversationHandler:
         states={
             MAIN_MENU: [
                 fav_cb,
+                session_cb,
                 CallbackQueryHandler(main_menu_router),
                 MessageHandler(DIGITS_FILTER, quick_group_input),
                 MessageHandler(FIO_FILTER, teacher_query_entered),
@@ -133,6 +151,10 @@ def build_conv() -> ConversationHandler:
                 MessageHandler(filters.TEXT & ~filters.COMMAND, setup_group_entered),
                 CallbackQueryHandler(start, pattern=r"^back_main$"),
             ],
+            ENTER_SESSION_GROUP: [
+                MessageHandler(SESSION_GROUP_FILTER, session_group_entered),
+                CallbackQueryHandler(start, pattern=r"^back_main$"),
+            ],
         },
         fallbacks=[CommandHandler("start", start)],
     )
@@ -164,7 +186,6 @@ async def _run():
     )
 
     stop_event = asyncio.Event()
-
     loop = asyncio.get_running_loop()
     for sig in (signal.SIGINT, signal.SIGTERM):
         loop.add_signal_handler(sig, stop_event.set)

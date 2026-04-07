@@ -8,18 +8,7 @@ def clean(text: str) -> str:
 
 
 def _parse_horizontal(rows, header_row_idx) -> dict:
-    """Горизонтальная таблица: дни = столбцы.
-
-    Структура страницы преподавателя:
-      стр 0: |Понедельник|Вторник|...|Суббота|  <- 6 кол., БЕЗ кол. времени
-      стр 1: |Пн|Вт|...|Сб|                        <- дубль заголовка
-      стр 2+: |08:20 09:50|занятие Пн|...| <- данные
-
-    Структура страницы группы:
-      стр 0: |Время|Пн|Вт|...|Сб|             <- в первом столбце 'Время'
-      стр 1+: |08:20|занятие Пн|...|             <- данные
-    """
-    # Определяем day_col: c_idx -> short_day_name
+    """Горизонтальная таблица: дни = столбцы."""
     day_col = {}
     for row in rows[:header_row_idx + 1]:
         cells = row.find_all(["td", "th"])
@@ -33,17 +22,12 @@ def _parse_horizontal(rows, header_row_idx) -> dict:
         return {day: [] for day in DAYS_ORDER}
 
     min_day_col = min(day_col.keys())
-
-    # Если дни начинаются с колонки 0 — значит колонки времени нет
-    # в заголовке (страница преподавателя), но в строках данных
-    # первый столбец — время. Нужно сдвинуть day_col на +1.
     if min_day_col == 0:
         day_col = {k + 1: v for k, v in day_col.items()}
 
     schedule = {day: [] for day in DAYS_ORDER}
     data_start = header_row_idx + 1
 
-    # Пропустить дополнительные строки-заголовки (напр., стр. с "Пн|Вт|...")
     while data_start < len(rows):
         cells = rows[data_start].find_all(["td", "th"])
         texts = [clean(c.get_text()) for c in cells]
@@ -145,7 +129,6 @@ def parse_schedule_html(html: str, only_day: str = None) -> str:
     if len(rows) < 2:
         return "⚠️ Таблица пустая."
 
-    # Определяем тип таблицы
     header_row_idx = None
     day_col = {}
     for r_idx, row in enumerate(rows[:3]):
@@ -165,6 +148,134 @@ def parse_schedule_html(html: str, only_day: str = None) -> str:
         schedule = _parse_vertical(rows)
 
     return _format_schedule(schedule, only_day)
+
+
+# ─── Парсинг расписания сессии ───────────────────────────────────────────────
+
+# Типы событий сессии с эмодзи
+_SESSION_TYPES = {
+    "экзамен":        "📝",
+    "зачет":          "✅",
+    "зачёт":          "✅",
+    "консультация":   "💬",
+    "дифференцированный зачет": "📊",
+    "диф. зачет":     "📊",
+    "диф.зачет":      "📊",
+    "курсовая":       "📐",
+}
+
+
+def _event_emoji(text: str) -> str:
+    low = text.lower()
+    for key, emoji in _SESSION_TYPES.items():
+        if key in low:
+            return emoji
+    return "📌"
+
+
+def parse_session_html(html: str) -> str:
+    """Парсит страницу /schedule/{fac}/{form}/{grp}/session.
+
+    Возвращает отформатированный текст с расписанием экзаменов.
+    """
+    soup = BeautifulSoup(html, "html.parser")
+
+    # Ищем таблицу с датами/временем сессии
+    target_table = None
+    for table in soup.find_all("table"):
+        text = table.get_text()
+        # Страница сессии содержит даты вида DD.MM или колонки Дата/Время/Дисциплина
+        if re.search(r'\d{2}\.\d{2}', text) or "Дата" in text or "Дисциплина" in text:
+            target_table = table
+            break
+
+    if not target_table:
+        # Попробуем извлечь текст из контентного блока
+        body = soup.find("div", class_=re.compile(r"schedule|content-inner|field-items|view-content", re.I))
+        raw = body.get_text("\n", strip=True) if body else ""
+        if raw and len(raw) > 20:
+            return "📋 *Расписание сессии:*\n\n" + raw[:3000]
+        return "📭 Расписание сессии пока не опубликовано."
+
+    rows = target_table.find_all("tr")
+    if len(rows) < 2:
+        return "📭 Расписание сессии пока не опубликовано."
+
+    # Определяем заголовки столбцов
+    header_cells = rows[0].find_all(["td", "th"])
+    headers = [clean(c.get_text()).lower() for c in header_cells]
+
+    # Пытаемся найти индексы нужных колонок
+    def _col(*keywords):
+        for kw in keywords:
+            for i, h in enumerate(headers):
+                if kw in h:
+                    return i
+        return None
+
+    col_date     = _col("дата", "число")
+    col_time     = _col("время", "час")
+    col_subject  = _col("дисциплин", "предмет", "название")
+    col_type     = _col("вид", "тип", "форма")
+    col_teacher  = _col("преподаватель", "препод", "фио")
+    col_room     = _col("аудитория", "кабинет", "ауд")
+
+    entries = []
+    for row in rows[1:]:
+        cells = row.find_all(["td", "th"])
+        if not cells:
+            continue
+        texts = [clean(c.get_text(" ")) for c in cells]
+
+        def g(idx):
+            if idx is not None and idx < len(texts):
+                return texts[idx]
+            return ""
+
+        date    = g(col_date)
+        time    = g(col_time)
+        subject = g(col_subject)
+        kind    = g(col_type)
+        teacher = g(col_teacher)
+        room    = g(col_room)
+
+        # Если заголовки не найдены — пробуем угадать по содержимому строки
+        if col_date is None:
+            for t in texts:
+                if re.search(r'\d{2}\.\d{2}', t):
+                    date = t
+                    break
+        if col_time is None:
+            for t in texts:
+                if re.search(r'\d{1,2}:\d{2}', t):
+                    time = t
+                    break
+        if col_subject is None and len(texts) >= 3:
+            # Третья колонка чаще всего дисциплина
+            subject = texts[2] if len(texts) > 2 else ""
+
+        # Пропускаем пустые строки
+        if not date and not subject:
+            continue
+
+        emoji = _event_emoji(kind or subject)
+        line = f"{emoji} *{date}*"
+        if time:
+            line += f" `{time}`"
+        if kind and kind.lower() not in (subject or "").lower():
+            line += f" — _{kind}_"
+        if subject:
+            line += f"\n    📖 {subject}"
+        if teacher:
+            line += f"\n    👤 {teacher}"
+        if room:
+            line += f"\n    🚪 Ауд. {room}"
+        entries.append(line)
+
+    if not entries:
+        return "📭 Расписание сессии пока не опубликовано."
+
+    return "📋 *Расписание сессии:*\n\n" + "\n\n".join(entries)
 
 
 # ─── Поиск преподавателей ────────────────────────────────────────────────────────

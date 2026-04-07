@@ -9,21 +9,24 @@ def main_keyboard(user_id: int) -> InlineKeyboardMarkup:
     rows = []
     if profile:
         rows.append([
-            InlineKeyboardButton("📅 Моё расписание", callback_data="my_schedule"),
-            InlineKeyboardButton("🔆 На сегодня",     callback_data="today_schedule"),
+            InlineKeyboardButton("📅 Моё расписание",  callback_data="my_schedule"),
+            InlineKeyboardButton("🔆 На сегодня",       callback_data="today_schedule"),
         ])
-    rows.append([InlineKeyboardButton("📚 Расписание группы",        callback_data="group_schedule")])
-    rows.append([InlineKeyboardButton("👨\u200d🏫 Расписание преподавателя",  callback_data="teacher_schedule")])
+        rows.append([
+            InlineKeyboardButton("📝 Экзамены / сессия", callback_data="my_session"),
+        ])
+    rows.append([InlineKeyboardButton("📚 Расписание группы",          callback_data="group_schedule")])
+    rows.append([InlineKeyboardButton("👨\u200d🏫 Расписание преподавателя",   callback_data="teacher_schedule")])
+    rows.append([InlineKeyboardButton("📝 Сессия любой группы",        callback_data="session_search")])
     rows.append([
         InlineKeyboardButton("⭐ Избранное",       callback_data="favorites"),
         InlineKeyboardButton("📋 История поиска",  callback_data="history"),
     ])
-    # Кнопка уведомлений — показываем только при наличии профиля
     if profile:
         notify_label = "🔕 Отключить уведомления" if subscribed else "🔔 Уведомления о расписании"
         rows.append([InlineKeyboardButton(notify_label, callback_data="toggle_notify")])
-    rows.append([InlineKeyboardButton("👤 Настроить профиль",      callback_data="setup_profile")])
-    rows.append([InlineKeyboardButton("ℹ️ Помощь",                 callback_data="help")])
+    rows.append([InlineKeyboardButton("👤 Настроить профиль",          callback_data="setup_profile")])
+    rows.append([InlineKeyboardButton("ℹ️ Помощь",                     callback_data="help")])
     return InlineKeyboardMarkup(rows)
 
 
@@ -52,6 +55,9 @@ def my_schedule_keyboard() -> InlineKeyboardMarkup:
         [
             InlineKeyboardButton("📅 Полное расписание", callback_data="my_schedule"),
             InlineKeyboardButton("🔆 На сегодня",        callback_data="today_schedule"),
+        ],
+        [
+            InlineKeyboardButton("📝 Экзамены / сессия", callback_data="my_session"),
         ],
         [
             InlineKeyboardButton("⭐ Избранное",    callback_data="favorites"),
