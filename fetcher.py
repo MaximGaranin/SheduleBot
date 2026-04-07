@@ -5,7 +5,7 @@ from database import get_cached_schedule, save_cached_schedule
 logger = logging.getLogger(__name__)
 
 
-async def fetch_page(url: str, use_cache: bool = True) -> str | None:
+async def fetch_page(url: str, use_cache: bool = True, ttl: int = 1800) -> str | None:
     """Fetch URL; use SQLite schedule cache when use_cache=True."""
     if use_cache:
         cached = get_cached_schedule(url)
