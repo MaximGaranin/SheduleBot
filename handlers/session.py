@@ -10,7 +10,7 @@ import logging
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import ContextTypes
 
-from config import BASE_URL, FACULTIES, STUDY_FORMS, MAIN_MENU
+from config import BASE_URL, FACULTIES, STUDY_FORMS, MAIN_MENU, ENTER_SESSION_GROUP
 from database import get_profile
 from fetcher import fetch_page
 from parser import parse_session_html
@@ -105,7 +105,7 @@ async def session_form_chosen(update: Update, context: ContextTypes.DEFAULT_TYPE
             InlineKeyboardButton("◀️ Назад", callback_data="back_main")
         ]]),
     )
-    return MAIN_MENU
+    return ENTER_SESSION_GROUP
 
 
 async def session_group_entered(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
@@ -134,7 +134,6 @@ async def session_group_entered(update: Update, context: ContextTypes.DEFAULT_TY
     header    = f"📝 *Сессия — группа {grp}* | {fac_name} / {form_name}\n{DIVIDER}\n"
     text      = header + parse_session_html(html)
 
-    # удаляем «загружаю...» и шлём результат
     try:
         await msg.delete()
     except Exception:

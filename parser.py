@@ -152,16 +152,15 @@ def parse_schedule_html(html: str, only_day: str = None) -> str:
 
 # ─── Парсинг расписания сессии ───────────────────────────────────────────────
 
-# Типы событий сессии с эмодзи
 _SESSION_TYPES = {
-    "экзамен":        "📝",
-    "зачет":          "✅",
-    "зачёт":          "✅",
-    "консультация":   "💬",
+    "экзамен":                  "📝",
+    "зачет":                    "✅",
+    "зачёт":                    "✅",
+    "консультация":             "💬",
     "дифференцированный зачет": "📊",
-    "диф. зачет":     "📊",
-    "диф.зачет":      "📊",
-    "курсовая":       "📐",
+    "диф. зачет":               "📊",
+    "диф.зачет":                "📊",
+    "курсовая":                 "📐",
 }
 
 
@@ -174,24 +173,36 @@ def _event_emoji(text: str) -> str:
 
 
 def parse_session_html(html: str) -> str:
-    """Парсит страницу /schedule/{fac}/{form}/{grp}/session.
+    """Парсит страницу /schedule/{fac}/{form}/{grp}/session СГУ.
 
-    Возвращает отформатированный текст с расписанием экзаменов.
+    Формат таблицы: Дата | Дисциплина | Преподаватель | Место проведения
+    Дата и время могут быть в одной ячейке в форматах:
+      - '2026-01-13 13:50:00'
+      - '13.01.2026 13:50'
+      - '13 января 2026 13:50'
     """
     soup = BeautifulSoup(html, "html.parser")
 
-    # Ищем таблицу с датами/временем сессии
+    # Ищем таблицу с нужными столбцами
     target_table = None
     for table in soup.find_all("table"):
-        text = table.get_text()
-        # Страница сессии содержит даты вида DD.MM или колонки Дата/Время/Дисциплина
-        if re.search(r'\d{2}\.\d{2}', text) or "Дата" in text or "Дисциплина" in text:
+        text = table.get_text(" ", strip=True)
+        if ("Дисциплина" in text or "дисциплин" in text.lower()) and \
+           ("Преподаватель" in text or "препод" in text.lower() or "Дата" in text):
             target_table = table
             break
 
+    # Фолбэк: любая таблица с датами в строках
     if not target_table:
-        # Попробуем извлечь текст из контентного блока
-        body = soup.find("div", class_=re.compile(r"schedule|content-inner|field-items|view-content", re.I))
+        for table in soup.find_all("table"):
+            text = table.get_text()
+            if re.search(r'\d{2}\.\d{2}\.\d{4}|\d{4}-\d{2}-\d{2}', text):
+                target_table = table
+                break
+
+    if not target_table:
+        body = soup.find("div", class_=re.compile(
+            r"schedule|content-inner|field-items|view-content", re.I))
         raw = body.get_text("\n", strip=True) if body else ""
         if raw and len(raw) > 20:
             return "📋 *Расписание сессии:*\n\n" + raw[:3000]
@@ -201,11 +212,10 @@ def parse_session_html(html: str) -> str:
     if len(rows) < 2:
         return "📭 Расписание сессии пока не опубликовано."
 
-    # Определяем заголовки столбцов
+    # Определяем заголовки
     header_cells = rows[0].find_all(["td", "th"])
     headers = [clean(c.get_text()).lower() for c in header_cells]
 
-    # Пытаемся найти индексы нужных колонок
     def _col(*keywords):
         for kw in keywords:
             for i, h in enumerate(headers):
@@ -213,12 +223,16 @@ def parse_session_html(html: str) -> str:
                     return i
         return None
 
-    col_date     = _col("дата", "число")
-    col_time     = _col("время", "час")
-    col_subject  = _col("дисциплин", "предмет", "название")
-    col_type     = _col("вид", "тип", "форма")
-    col_teacher  = _col("преподаватель", "препод", "фио")
-    col_room     = _col("аудитория", "кабинет", "ауд")
+    col_date    = _col("дата", "число")
+    col_time    = _col("время", "час")
+    col_subject = _col("дисциплин", "предмет", "название")
+    col_type    = _col("вид", "тип", "форма")
+    col_teacher = _col("преподаватель", "препод", "фио")
+    col_room    = _col("аудитория", "кабинет", "ауд", "место")
+
+    # Если в дате уже есть время (нет отдельной колонки времени),
+    # попробуем определить это после первой строки данных
+    date_has_time = False
 
     entries = []
     for row in rows[1:]:
@@ -227,49 +241,70 @@ def parse_session_html(html: str) -> str:
             continue
         texts = [clean(c.get_text(" ")) for c in cells]
 
+        # Пропускаем строки-заголовки внутри таблицы
+        if all(t.lower() in headers or not t for t in texts):
+            continue
+
         def g(idx):
             if idx is not None and idx < len(texts):
-                return texts[idx]
+                v = texts[idx]
+                return v if v not in ("-", "–", "—") else ""
             return ""
 
-        date    = g(col_date)
-        time    = g(col_time)
-        subject = g(col_subject)
-        kind    = g(col_type)
-        teacher = g(col_teacher)
-        room    = g(col_room)
+        date_raw = g(col_date)
+        time_val = g(col_time)
+        subject  = g(col_subject)
+        kind     = g(col_type)
+        teacher  = g(col_teacher)
+        room     = g(col_room)
 
-        # Если заголовки не найдены — пробуем угадать по содержимому строки
+        # Если нет отдельной колонки даты — ищем дату по содержимому
         if col_date is None:
             for t in texts:
-                if re.search(r'\d{2}\.\d{2}', t):
-                    date = t
+                if re.search(r'\d{2}\.\d{2}\.\d{4}|\d{4}-\d{2}-\d{2}|\d{2}\.\d{2}', t):
+                    date_raw = t
                     break
-        if col_time is None:
-            for t in texts:
-                if re.search(r'\d{1,2}:\d{2}', t):
-                    time = t
-                    break
-        if col_subject is None and len(texts) >= 3:
-            # Третья колонка чаще всего дисциплина
-            subject = texts[2] if len(texts) > 2 else ""
+
+        # Если нет отдельной колонки времени — извлекаем время из даты
+        if col_time is None and date_raw:
+            m = re.search(r'(\d{1,2}:\d{2})(?::\d{2})?', date_raw)
+            if m:
+                time_val = m.group(1)
+                date_has_time = True
+
+        # Форматируем дату
+        date_str = date_raw
+        # ISO формат: 2026-01-13 13:50:00 → 13.01.2026
+        m_iso = re.match(r'(\d{4})-(\d{2})-(\d{2})', date_raw)
+        if m_iso:
+            date_str = f"{m_iso.group(3)}.{m_iso.group(2)}.{m_iso.group(1)}"
+            if not time_val:
+                mt = re.search(r'(\d{2}:\d{2})(?::\d{2})?', date_raw)
+                if mt:
+                    time_val = mt.group(1)
+
+        # Если предмет не определён — берём самую длинную ячейку (кроме даты)
+        if not subject and len(texts) >= 2:
+            candidates = [t for i, t in enumerate(texts) if i != col_date]
+            subject = max(candidates, key=len, default="")
 
         # Пропускаем пустые строки
-        if not date and not subject:
+        if not date_str and not subject:
             continue
 
         emoji = _event_emoji(kind or subject)
-        line = f"{emoji} *{date}*"
-        if time:
-            line += f" `{time}`"
-        if kind and kind.lower() not in (subject or "").lower():
+        line  = f"{emoji} *{date_str}*"
+        if time_val:
+            line += f" `{time_val}`"
+        if kind and subject and kind.lower() not in subject.lower():
             line += f" — _{kind}_"
         if subject:
             line += f"\n    📖 {subject}"
         if teacher:
             line += f"\n    👤 {teacher}"
         if room:
-            line += f"\n    🚪 Ауд. {room}"
+            line += f"\n    🚪 {room}"
+
         entries.append(line)
 
     if not entries:

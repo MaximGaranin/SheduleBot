@@ -56,4 +56,5 @@ WEEKDAY_TO_DAY = {0: "Пн", 1: "Вт", 2: "Ср", 3: "Чт", 4: "Пт", 5: "С�
     SETUP_FORM,
     SETUP_GROUP,
     TEACHER_SELECT_NUMBER,
-) = range(9)
+    ENTER_SESSION_GROUP,
+) = range(10)
