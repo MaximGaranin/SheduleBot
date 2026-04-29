@@ -1,8 +1,10 @@
+import logging
 from telegram import InlineKeyboardMarkup, LinkPreviewOptions
 from telegram.error import BadRequest
 from config import FACULTIES, STUDY_FORMS
 from database import get_profile
 
+logger = logging.getLogger(__name__)
 _NO_PREVIEW = LinkPreviewOptions(is_disabled=True)
 
 
@@ -30,6 +32,7 @@ async def send_long(
     Отправляет текст чанками по 4000 символов.
     Если Markdown ломается — повторяет без parse_mode (plain text).
     """
+    logger.info("send_long: text_len=%d parse_mode=%s", len(text), parse_mode)
     chunks = [text[i:i + 4000] for i in range(0, len(text), 4000)]
     for idx, chunk in enumerate(chunks):
         is_last = (idx == len(chunks) - 1)
@@ -40,7 +43,14 @@ async def send_long(
         )
         try:
             await message_obj.reply_text(chunk, **kwargs)
-        except BadRequest:
-            # Markdown сломан — отправляем без форматирования
+            logger.info("send_long: chunk %d/%d sent OK", idx + 1, len(chunks))
+        except BadRequest as e:
+            logger.warning("send_long: BadRequest on chunk %d: %s — retrying plain", idx + 1, e)
             kwargs["parse_mode"] = None
-            await message_obj.reply_text(chunk, **kwargs)
+            try:
+                await message_obj.reply_text(chunk, **kwargs)
+                logger.info("send_long: chunk %d/%d sent plain OK", idx + 1, len(chunks))
+            except Exception as e2:
+                logger.error("send_long: chunk %d plain also failed: %s", idx + 1, e2)
+        except Exception as e:
+            logger.error("send_long: unexpected error on chunk %d: %s", idx + 1, e)
