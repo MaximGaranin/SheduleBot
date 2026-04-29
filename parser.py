@@ -9,13 +9,18 @@ def clean(text: str) -> str:
 
 def _parse_horizontal(rows, header_row_idx) -> dict:
     day_col = {}
+    seen_days = set()
+    # Берём только первое вхождение каждого дня недели.
+    # Фикс для мехмата СГУ: первая строка заголовка содержит 14 ячеек вместо 7
+    # (дни повторяются: полное название + сокращение), что сбивало индексы.
     for row in rows[:header_row_idx + 1]:
         cells = row.find_all(["td", "th"])
         for c_idx, cell in enumerate(cells):
             txt = clean(cell.get_text())
             short = DAY_NAMES.get(txt)
-            if short:
+            if short and short not in seen_days:
                 day_col[c_idx] = short
+                seen_days.add(short)
 
     if not day_col:
         return {day: [] for day in DAYS_ORDER}
@@ -129,8 +134,6 @@ def parse_schedule_html(html: str, only_day: str = None) -> str:
 
     header_row_idx = None
     day_col = {}
-    # Увеличено с 3 до 5: таблицы мехмата и ряда других факультетов
-    # могут иметь заголовок с днями недели глубже первых трёх строк
     for r_idx, row in enumerate(rows[:5]):
         cells = row.find_all(["td", "th"])
         for c_idx, cell in enumerate(cells):
@@ -152,7 +155,6 @@ def parse_schedule_html(html: str, only_day: str = None) -> str:
 
 # ─── Парсинг расписания сессии ───────────────────────────────────────────────
 
-# Русские названия месяцев для формата «13 апреля 2026 г. 10:00»
 _RU_MONTHS = {
     "января": "01", "февраля": "02", "марта": "03",
     "апреля": "04", "мая": "05",     "июня": "06",
@@ -160,7 +162,6 @@ _RU_MONTHS = {
     "октября": "10", "ноября": "11",  "декабря": "12",
 }
 
-# Типы событий сессии
 _SESSION_TYPES = [
     ("экзамен",                   "📝"),
     ("дифференцированный зачет",  "📊"),
@@ -184,22 +185,12 @@ def _event_emoji(kind: str, subject: str = "") -> str:
 
 
 def _parse_ru_date(raw: str):
-    """Парсит дату и время в любом из форматов:
-      - '13 апреля 2026 г. 10:00'
-      - '2026-04-13 10:00:00'
-      - '13.04.2026 10:00'
-    Возвращает (date_str, time_str)
-    """
     raw = raw.strip()
-
-    # ISO: 2026-04-13 10:00:00
     m = re.match(r'(\d{4})-(\d{2})-(\d{2})(?:\s+(\d{2}:\d{2}))?', raw)
     if m:
         date_str = f"{m.group(3)}.{m.group(2)}.{m.group(1)}"
         time_str = m.group(4) or ""
         return date_str, time_str
-
-    # Русский: 13 апреля 2026 г. 10:00
     m = re.match(
         r'(\d{1,2})\s+([\u0430-я]+)\s+(\d{4})(?:\s*г\.?)?(?:\s+(\d{1,2}:\d{2}))?',
         raw, re.IGNORECASE
@@ -211,27 +202,20 @@ def _parse_ru_date(raw: str):
         time_str = m.group(4) or ""
         date_str = f"{day}.{month}.{year}"
         return date_str, time_str
-
-    # DD.MM.YYYY HH:MM
     m = re.match(r'(\d{2}\.\d{2}\.\d{4})(?:\s+(\d{1,2}:\d{2}))?', raw)
     if m:
         return m.group(1), m.group(2) or ""
-
-    # Если ничего не подошло — извлечем время
     mt = re.search(r'(\d{1,2}:\d{2})', raw)
     time_str = mt.group(1) if mt else ""
     date_str = raw[:mt.start()].strip() if mt else raw
     return date_str, time_str
 
 
-# Типы событий в начале строки (заочники)
-# Пример: "ЭкзаменСтруктуры данных" → kind="Экзамен", subject="Структуры данных"
 _TYPE_PREFIX_RE = re.compile(
     r'^(Экзамен|Дифференцированный\s+зач[её]т|Консультация|Зач[её]т|Курсовая|Лабораторная|Практика|Лекция)',
     re.IGNORECASE,
 )
 
-# Тип в конце строки (дневники)
 _TYPE_SUFFIX_RE = re.compile(
     r'\s+(Экзамен|Дифференцированный\s+зач[её]т|Консультация|Зач[её]т|Курсовая)$',
     re.IGNORECASE,
@@ -239,30 +223,17 @@ _TYPE_SUFFIX_RE = re.compile(
 
 
 def _split_subject_kind(raw: str):
-    """Разделяет тип события и название дисциплины.
-
-    Поддерживает два формата:
-      1. Заочники: тип в НАЧАЛЕ без пробела
-         "ЭкзаменСтруктуры данных" → ("Структуры данных", "Экзамен")
-      2. Дневники: тип в КОНЦЕ через пробел
-         "Микроэкономика Экзамен" → ("Микроэкономика", "Экзамен")
-    """
     raw = raw.strip()
-
-    # Сначала пробуем формат заочников: тип в начале без пробела
     m = _TYPE_PREFIX_RE.match(raw)
     if m:
         kind    = m.group(1).strip()
         subject = raw[m.end():].strip()
         return subject, kind
-
-    # Затем формат дневников: тип в конце через пробел
     m = _TYPE_SUFFIX_RE.search(raw)
     if m:
         kind    = m.group(1).strip()
         subject = raw[:m.start()].strip()
         return subject, kind
-
     return raw, ""
 
 
@@ -280,8 +251,6 @@ def _is_session_empty(soup: BeautifulSoup) -> bool:
     for marker in empty_markers:
         if marker in page_text:
             return True
-
-    # Нет дат — сессия пуста
     has_date = bool(
         re.search(r'\d{4}-\d{2}-\d{2}|\d{2}\.\d{2}\.\d{4}', page_text) or
         any(m in page_text for m in _RU_MONTHS)
@@ -291,29 +260,14 @@ def _is_session_empty(soup: BeautifulSoup) -> bool:
         has_data = any(len(t.find_all("tr")) >= 2 for t in tables)
         if not has_data:
             return True
-
     return False
 
 
 def parse_session_html(html: str) -> str:
-    """Парсит страницу /schedule/{fac}/{form}/{grp}/session.
-
-    Поддерживает два формата:
-
-    Дневники (колонка «Дисциплина», тип в конце):
-      2026-01-13 13:50:00 | Микроэкономика Экзамен | Иванов И.И. | 12-518
-
-    Заочники (колонка «Отчётность / Дисциплина», тип в начале):
-      13 апреля 2026 г. 10:00 | ЭкзаменСтруктуры данных | Батраева И.А. | 12 корпус, 314 комната
-    """
     soup = BeautifulSoup(html, "html.parser")
-
     if _is_session_empty(soup):
         return "📭 Расписание сессии ещё не заполнено."
 
-    # Ищем таблицу:
-    # Дневники: Дисциплина + Преподаватель
-    # Заочники: Отчётность / Дисциплина + Преподаватель
     target_table = None
     for table in soup.find_all("table"):
         text = table.get_text(" ", strip=True)
@@ -321,8 +275,6 @@ def parse_session_html(html: str) -> str:
            ("преподаватель" in text.lower() or "место" in text.lower()):
             target_table = table
             break
-
-    # Фолбэк: любая таблица с ISO или русской датой
     if not target_table:
         for table in soup.find_all("table"):
             t = table.get_text()
@@ -330,7 +282,6 @@ def parse_session_html(html: str) -> str:
                any(m in t.lower() for m in _RU_MONTHS):
                 target_table = table
                 break
-
     if not target_table:
         return "📭 Расписание сессии ещё не заполнено."
 
@@ -338,7 +289,6 @@ def parse_session_html(html: str) -> str:
     if len(rows) < 2:
         return "📭 Расписание сессии ещё не заполнено."
 
-    # Определяем индексы колонок
     header_cells = rows[0].find_all(["td", "th"])
     headers = [clean(c.get_text()).lower() for c in header_cells]
 
@@ -349,12 +299,11 @@ def parse_session_html(html: str) -> str:
                     return i
         return None
 
-    col_date    = _col("дата", "число") 
+    col_date    = _col("дата", "число")
     col_subject = _col("дисциплин", "отчётность", "предмет")
     col_teacher = _col("преподаватель", "препод", "фио")
     col_room    = _col("место", "аудитория", "кабинет", "ауд")
 
-    # Фаллбэк по позиции
     if col_date    is None: col_date    = 0
     if col_subject is None: col_subject = 1
     if col_teacher is None: col_teacher = 2
@@ -380,7 +329,6 @@ def parse_session_html(html: str) -> str:
 
         if not date_raw and not subject_raw:
             continue
-        # Пропускаем строку заголовки
         if date_raw.lower() in headers or subject_raw.lower() in headers:
             continue
 
