@@ -1,4 +1,5 @@
 from telegram import InlineKeyboardMarkup, LinkPreviewOptions
+from telegram.error import BadRequest
 from config import FACULTIES, STUDY_FORMS
 from database import get_profile
 
@@ -27,14 +28,19 @@ async def send_long(
 ):
     """
     Отправляет текст чанками по 4000 символов.
-    Если передан reply_markup — он прикрепляется к последнему чанку.
+    Если Markdown ломается — повторяет без parse_mode (plain text).
     """
     chunks = [text[i:i + 4000] for i in range(0, len(text), 4000)]
     for idx, chunk in enumerate(chunks):
         is_last = (idx == len(chunks) - 1)
-        await message_obj.reply_text(
-            chunk,
+        kwargs = dict(
             parse_mode=parse_mode,
             link_preview_options=_NO_PREVIEW,
             reply_markup=reply_markup if is_last else None,
         )
+        try:
+            await message_obj.reply_text(chunk, **kwargs)
+        except BadRequest:
+            # Markdown сломан — отправляем без форматирования
+            kwargs["parse_mode"] = None
+            await message_obj.reply_text(chunk, **kwargs)
