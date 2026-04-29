@@ -129,7 +129,9 @@ def parse_schedule_html(html: str, only_day: str = None) -> str:
 
     header_row_idx = None
     day_col = {}
-    for r_idx, row in enumerate(rows[:3]):
+    # Увеличено с 3 до 5: таблицы мехмата и ряда других факультетов
+    # могут иметь заголовок с днями недели глубже первых трёх строк
+    for r_idx, row in enumerate(rows[:5]):
         cells = row.find_all(["td", "th"])
         for c_idx, cell in enumerate(cells):
             txt = clean(cell.get_text())
